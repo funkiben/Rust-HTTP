@@ -72,76 +72,81 @@ impl Server {
     }
 }
 
-// TODO refactor this to only read
-fn respond_to_requests<'a, R: Read, W: Write>(reader: R, mut writer: W, get_response: impl Fn(Request) -> Vec<u8>) -> std::io::Result<()> {
-    let mut reader = BufReader::new(reader);
-    loop {
-        let request = read_request(&mut reader);
+fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, get_response: impl Fn(Request) -> Vec<u8>) -> std::io::Result<()> {
+    let result = read_requests(reader, |request| {
+        let should_close_after_response = should_close_after_response(&request);
+        let write_result = writer.write(&get_response(request));
+        let flush_result = writer.flush();
+        should_close_after_response || write_result.is_err() || flush_result.is_err()
+    });
 
-        match request {
-            Ok(request) => {
-                let should_close_after_response = should_close_after_response(&request);
-
-                writer.write(&get_response(request))?;
-                writer.flush()?;
-
-                if should_close_after_response {
-                    return Ok(());
-                }
-            }
-            Err(RequestParsingErr::EOF) => {
-                return Ok(());
-            }
-            Err(error) => {
-                // TODO send back more informative responses
-                println!("Request parsing error: {:?}", error);
-                writer.write(REQUEST_PARSING_ERROR_RESPONSE)?;
-                writer.flush()?;
-                return Ok(());
-            }
-        }
+    if let Err(error) = result {
+        println!("Error: {:?}", error);
+        writer.write(REQUEST_PARSING_ERROR_RESPONSE)?;
+        writer.flush()?;
     }
+
+    Ok(())
 }
 
 fn should_close_after_response(request: &Request) -> bool {
     request.headers.contains_header_value(&CONNECTION, "close")
 }
 
-fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingErr> {
+fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
+    let mut reader = BufReader::new(reader);
+    loop {
+        let request = read_request(&mut reader);
+
+        match request {
+            Ok(request) => {
+                if on_request(request) {
+                    return Ok(());
+                }
+            }
+            Err(RequestParsingError::EOF) => {
+                return Ok(());
+            }
+            err => return err.map(|_| {})
+        }
+    }
+}
+
+fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
     let first_line = read_line(reader).map_err(|err|
-        if let RequestParsingErr::UnexpectedEOF = err { RequestParsingErr::EOF } else { err }
+        if let RequestParsingError::UnexpectedEOF = err { RequestParsingError::EOF } else { err }
     )?;
 
     let (method, uri, http_version) = parse_first_line(first_line)?;
     let headers = parse_headers(read_lines_until_empty_line(reader)?)?;
 
     let body = if let Some(value) = headers.get_first_header_value(&CONTENT_LENGTH) {
-        let body_length = value.parse().or(Err(RequestParsingErr::InvalidHeaderValue))?;
+        let body_length = value.parse().or(Err(RequestParsingError::InvalidHeaderValue))?;
         read_body(reader, body_length)?
     } else {
         Vec::new()
     };
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(RequestParsingErr::WrongHttpVersion);
+        return Err(RequestParsingError::WrongHttpVersion);
     }
 
     Ok(Request { method, uri, headers, body })
 }
 
-fn read_body(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, RequestParsingErr> {
+fn read_body(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, RequestParsingError> {
     let mut buf = vec![0; body_length];
-    reader.read_exact(&mut buf).or_else(|e| Err(RequestParsingErr::Reading(e)))?;
+    reader.read_exact(&mut buf).or_else(|e| Err(RequestParsingError::Reading(e)))?;
     Ok(buf)
 }
 
 // CRLF: \r\n
-fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsingErr> {
+fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsingError> {
     let mut line = String::new();
-    reader.read_line(&mut line).or_else(|e| Err(RequestParsingErr::Reading(e)))?;
+    reader.read_line(&mut line).or_else(|e| Err(RequestParsingError::Reading(e)))?;
 
     if line.is_empty() {
-        return Err(RequestParsingErr::UnexpectedEOF);
+        return Err(RequestParsingError::UnexpectedEOF);
     }
 
     // pop the \r\n off the end of the line
@@ -151,7 +156,7 @@ fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsing
     Ok(line)
 }
 
-fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<String>, RequestParsingErr> {
+fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<String>, RequestParsingError> {
     let mut lines = Vec::new();
 
     loop {
@@ -165,20 +170,20 @@ fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<
     }
 }
 
-fn parse_headers(mut lines: Vec<String>) -> Result<HeaderMap, RequestParsingErr> {
+fn parse_headers(mut lines: Vec<String>) -> Result<HeaderMap, RequestParsingError> {
     let mut headers = HashMap::new();
     while !lines.is_empty() {
-        let (header, value) = parse_header(lines.pop().ok_or(RequestParsingErr::ParsingHeader)?)?;
+        let (header, value) = parse_header(lines.pop().ok_or(RequestParsingError::ParsingHeader)?)?;
         headers.add_header(header, value);
     }
     Ok(headers)
 }
 
-fn parse_header(raw: String) -> Result<(Header, String), RequestParsingErr> {
+fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
     let mut split = raw.splitn(2, ": ");
 
-    let header_raw = split.next().ok_or(RequestParsingErr::ParsingHeader)?;
-    let value = split.next().ok_or(RequestParsingErr::ParsingHeader)?;
+    let header_raw = split.next().ok_or(RequestParsingError::ParsingHeader)?;
+    let value = split.next().ok_or(RequestParsingError::ParsingHeader)?;
 
     Ok((parse_header_name(header_raw), String::from(value)))
 }
@@ -198,17 +203,17 @@ fn parse_header_name(raw: &str) -> Header {
 /*
 Method Request-URI HTTP-Version CRLF
  */
-fn parse_first_line(line: String) -> Result<(Method, String, String), RequestParsingErr> {
+fn parse_first_line(line: String) -> Result<(Method, String, String), RequestParsingError> {
     let mut split = line.split(" ");
 
-    let method_raw = split.next().ok_or(RequestParsingErr::MissingMethod)?;
-    let uri = split.next().ok_or(RequestParsingErr::MissingURI)?;
-    let http_version = split.next().ok_or(RequestParsingErr::MissingHttpVersion)?;
+    let method_raw = split.next().ok_or(RequestParsingError::MissingMethod)?;
+    let uri = split.next().ok_or(RequestParsingError::MissingURI)?;
+    let http_version = split.next().ok_or(RequestParsingError::MissingHttpVersion)?;
 
     Ok((parse_method(method_raw)?, String::from(uri), String::from(http_version)))
 }
 
-fn parse_method(raw: &str) -> Result<Method, RequestParsingErr> {
+fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     if raw.eq("GET") {
         Ok(Get)
     } else if raw.eq("POST") {
@@ -218,7 +223,7 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingErr> {
     } else if raw.eq("PUT") {
         Ok(Put)
     } else {
-        Err(RequestParsingErr::UnrecognizedMethod(String::from(raw)))
+        Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
     }
 }
 
@@ -241,7 +246,7 @@ fn response_to_bytes(mut response: Response) -> Vec<u8> {
 }
 
 #[derive(Debug)]
-enum RequestParsingErr {
+enum RequestParsingError {
     Reading(std::io::Error),
     MissingMethod,
     MissingURI,
@@ -484,7 +489,7 @@ mod tests {
                     ]),
                     body: body2.to_vec(),
                 }
-            ]
+            ],
         )
     }
 
