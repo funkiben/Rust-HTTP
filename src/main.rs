@@ -2,13 +2,14 @@ use std::fs;
 use std::io::Error;
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps};
+use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps, CONTENT_TYPE};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::config::Config;
-use my_http::server::router::Router;
 use my_http::server::router::RequestHandlerResult::SendImmediately;
 use my_http::server::server::Server;
+use my_http::server::router::Router;
+use std::collections::HashMap;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
@@ -19,7 +20,8 @@ fn main() -> Result<(), Error> {
     });
 
     server.root_router.route("/middleton", serve_files("/Users/Ben/Code/middletonSite"));
-    server.root_router.route("", serve_files("/Users/Ben/Code/ReactTetris/tetris-app/build"));
+    server.root_router.route("", serve_files("/Users/Ben/Code/test-react/my-app/build"));
+    // server.root_router.route("", serve_files("/Users/Ben/Code/ReactTetris/tetris-app/build"));
 
     server.start()
 }
@@ -41,11 +43,29 @@ fn serve_files(file_path: &'static str) -> Router {
 
 fn file_response(path: &str) -> Response {
     if let Ok(contents) = fs::read(path) {
+        let mut headers = HashMap::new();
+        headers.add_header(CONTENT_LENGTH, contents.len().to_string());
+
+        if let Some(content_type) = get_content_type(path) {
+            headers.add_header(CONTENT_TYPE, String::from(content_type));
+        }
+
         return Response {
             status: &OK_200,
-            headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, contents.len().to_string())]),
+            headers,
             body: contents,
         };
     }
     return Response::from(&NOT_FOUND_404);
+}
+
+fn get_content_type(path: &str) -> Option<&'static str> {
+    if path.ends_with(".ico") {
+        return Some("image/x-icon")
+    } else if path.ends_with(".js") {
+        return Some("application/javascript")
+    } else if path.ends_with(".svg") {
+        return Some("image/svg+xml")
+    }
+    None
 }
