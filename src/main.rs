@@ -6,7 +6,7 @@ use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps, CONTENT_TYPE};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::config::Config;
-use my_http::server::router::RequestHandlerResult::SendImmediately;
+use my_http::server::router::ListenerResult::SendImmediately;
 use my_http::server::server::Server;
 use my_http::server::router::Router;
 use std::collections::HashMap;
