@@ -67,7 +67,6 @@ impl Server {
         respond_to_requests(&stream, &stream, |request|
             self.root_router.response(request)
                 .map(response_to_bytes)
-                // TODO avoid cloning
                 .unwrap_or(self.no_route_response_bytes.clone()))
     }
 }
