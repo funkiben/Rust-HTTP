@@ -23,11 +23,6 @@ pub struct Server {
     no_route_response_bytes: Vec<u8>,
 }
 
-pub enum RequestHandlerResult {
-    Next,
-    Return(Response),
-}
-
 impl Server {
     pub fn new(config: Config) -> Server {
         Server {
