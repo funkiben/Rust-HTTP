@@ -20,8 +20,7 @@ fn main() -> Result<(), Error> {
     });
 
     server.root_router.route("/middleton", serve_files("/Users/Ben/Code/middletonSite"));
-    server.root_router.route("", serve_files("/Users/Ben/Code/test-react/my-app/build"));
-    // server.root_router.route("", serve_files("/Users/Ben/Code/ReactTetris/tetris-app/build"));
+    server.root_router.route("", serve_files("/Users/Ben/Code/ReactTetris/tetris-app/build"));
 
     server.start()
 }
