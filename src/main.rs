@@ -19,13 +19,13 @@ fn main() -> Result<(), Error> {
         no_route_response: Response::from(&NOT_FOUND_404),
     });
 
-    server.root_router.route("/middleton", serve_files("/Users/Ben/Code/middletonSite"));
-    server.root_router.route("", serve_files("/Users/Ben/Code/ReactTetris/tetris-app/build"));
+    server.root_router.route("/middleton", file_router("/Users/Ben/Code/middletonSite"));
+    server.root_router.route("", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build"));
 
     server.start()
 }
 
-fn serve_files(file_path: &'static str) -> Router {
+fn file_router(file_path: &'static str) -> Router {
     let mut router = Router::new();
     router.on("/", move |uri, _, _| {
         let mut path = String::from(file_path);

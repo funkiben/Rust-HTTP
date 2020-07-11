@@ -133,9 +133,7 @@ mod tests {
         router.on("/hello", |uri, request, response| {
             test_route_function_args(
                 uri, request, response,
-                "/hello",
-                test_request("/hello"),
-                None);
+                "/hello", test_request("/hello"), None);
             Next
         });
 
@@ -239,9 +237,7 @@ mod tests {
         router.on("/he", move |uri, request, response| {
             test_route_function_args(
                 uri, request, response,
-                "/hello",
-                test_request("/hello"),
-                None);
+                "/hello", test_request("/hello"), None);
             add_function_call(&calls_clone, "called /he");
             Next
         });
@@ -250,9 +246,7 @@ mod tests {
         router.on("/hel", move |uri, request, response| {
             test_route_function_args(
                 uri, request, response,
-                "/hello",
-                test_request("/hello"),
-                None);
+                "/hello", test_request("/hello"), None);
             add_function_call(&calls_clone, "called /hel");
             Next
         });
@@ -261,9 +255,7 @@ mod tests {
         router.on("/hell", move |uri, request, response| {
             test_route_function_args(
                 uri, request, response,
-                "/hello",
-                test_request("/hello"),
-                None);
+                "/hello", test_request("/hello"), None);
             add_function_call(&calls_clone, "called /hell");
             Next
         });
@@ -333,5 +325,78 @@ mod tests {
         });
 
         test_route(&router, "/hello", &calls, None, vec!["called"]);
+    }
+
+    #[test]
+    fn sub_router() {
+        let mut router = Router::new();
+        let mut sub_router = Router::new();
+
+        let calls = function_calls();
+
+        let calls_clone = Arc::clone(&calls);
+        sub_router.on("/bar", move |uri, request, response| {
+            test_route_function_args(uri, request, response,
+                                     "/bar", test_request("/foo/bar"), None);
+            add_function_call(&calls_clone, "called");
+            Next
+        });
+
+        router.route("/foo", sub_router);
+
+        test_route(&router, "/foo/bar", &calls, None, vec!["called"]);
+    }
+
+    #[test]
+    fn sub_sub_router() {
+        let mut router = Router::new();
+        let mut sub_router = Router::new();
+        let mut sub_sub_router = Router::new();
+
+        let calls = function_calls();
+
+        let calls_clone = Arc::clone(&calls);
+        sub_sub_router.on("/bar", move |uri, request, response| {
+            test_route_function_args(uri, request, response,
+                                     "/bar", test_request("/baz/foo/bar"), None);
+            add_function_call(&calls_clone, "called");
+            Next
+        });
+
+        sub_router.route("/foo", sub_sub_router);
+        router.route("/baz", sub_router);
+
+        test_route(&router, "/baz/foo/bar", &calls, None, vec!["called"]);
+    }
+
+    #[test]
+    fn sub_router_order_maintained() {
+        let mut router = Router::new();
+        let mut sub_router = Router::new();
+
+        let calls = function_calls();
+
+        let calls_clone = Arc::clone(&calls);
+        sub_router.on("/bar", move |_,_,_| {
+            add_function_call(&calls_clone, "call 1");
+            Next
+        });
+
+        let calls_clone = Arc::clone(&calls);
+        sub_router.on("/bar", move |_,_,_| {
+            add_function_call(&calls_clone, "call 2");
+            Next
+        });
+
+        router.route("/foo", sub_router);
+
+        let calls_clone = Arc::clone(&calls);
+        router.on("/foo", move |_,_,_| {
+            add_function_call(&calls_clone, "call 3");
+            Next
+        });
+
+
+        test_route(&router, "/foo/bar", &calls, None, vec!["call 1", "call 2", "call 3"]);
     }
 }

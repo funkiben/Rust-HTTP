@@ -26,7 +26,7 @@ pub struct Server {
 impl Server {
     pub fn new(config: Config) -> Server {
         Server {
-            no_route_response_bytes: response_to_bytes(config.no_route_response.clone()),
+            no_route_response_bytes: response_to_bytes(&config.no_route_response),
             config,
             root_router: Router::new(),
         }
@@ -43,7 +43,7 @@ impl Server {
             .filter_map(|stream| {
                 if let Err(error) = stream {
                     println!("Error unwrapping new connection: {}", error);
-                    return None
+                    return None;
                 }
                 Some(stream.unwrap())
             })
@@ -64,7 +64,7 @@ impl Server {
 
         respond_to_requests(&stream, &stream, |request|
             self.root_router.response(request)
-                .map(response_to_bytes)
+                .map(|response| response_to_bytes(&response))
                 .unwrap_or(self.no_route_response_bytes.clone()))
     }
 }
@@ -224,10 +224,10 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     }
 }
 
-fn response_to_bytes(mut response: Response) -> Vec<u8> {
+fn response_to_bytes(response: &Response) -> Vec<u8> {
     let mut buf = format!("{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason);
 
-    for (header, values) in response.headers {
+    for (header, values) in response.headers.iter() {
         for value in values {
             buf.push_str(format!("{}: {}\r\n", header.as_str(), value).as_str());
         }
@@ -237,7 +237,7 @@ fn response_to_bytes(mut response: Response) -> Vec<u8> {
 
     let mut buf = buf.into_bytes();
 
-    buf.append(&mut response.body);
+    buf.extend(&response.body);
 
     buf
 }
@@ -262,10 +262,13 @@ mod tests {
     use std::cmp::min;
     use std::io::{Read, Write};
 
-    use crate::common::header::{CONNECTION, CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
+    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
     use crate::common::method::Method;
     use crate::common::request::Request;
-    use crate::server::server::respond_to_requests;
+    use crate::common::response::Response;
+    use crate::common::status::OK_200;
+    use crate::server::server::{respond_to_requests, response_to_bytes};
+    use std::collections::HashMap;
 
     struct MockReader {
         data: Vec<Vec<u8>>
@@ -645,4 +648,43 @@ mod tests {
             vec![],
             "HTTP/1.1 400 Bad Request\r\n\r\n");
     }
+
+    #[test]
+    fn response_with_headers_and_body_to_bytes() {
+        let response = Response {
+            status: &OK_200,
+            headers: HeaderMapOps::from(vec![
+                (CONTENT_TYPE, String::from("hello")),
+                (CONNECTION, String::from("bye")),
+            ]),
+            body: Vec::from("the body".as_bytes())
+        };
+        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
+                   "HTTP/1.1 200 OK\r\nContent-Type: hello\r\nConnection: bye\r\n\r\nthe body")
+    }
+
+    #[test]
+    fn response_no_header_or_body_to_bytes() {
+        let response = Response {
+            status: &OK_200,
+            headers: HashMap::new(),
+            body: vec![]
+        };
+        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
+                   "HTTP/1.1 200 OK\r\n\r\n")
+    }
+
+    #[test]
+    fn response_one_header_no_body_to_bytes() {
+        let response = Response {
+            status: &OK_200,
+            headers: HeaderMapOps::from(vec![
+                (Header::Custom(String::from("custom header")), String::from("header value"))
+            ]),
+            body: vec![]
+        };
+        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
+                   "HTTP/1.1 200 OK\r\ncustom header: header value\r\n\r\n")
+    }
+
 }
