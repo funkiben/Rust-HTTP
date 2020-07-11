@@ -1,18 +1,17 @@
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::server::router::ListenerResult::{Next, SendImmediately, SetResponse};
+use crate::server::router::ListenerResult::{Next, SendResponse};
 
 pub enum ListenerResult {
     Next,
-    SetResponse(Response),
-    SendImmediately(Response),
+    SendResponse(Response)
 }
 
 impl ListenerResult {
     fn into_response(self) -> Option<Response> {
         match self {
-            SetResponse(response) | SendImmediately(response) => Some(response),
-            _ => None
+            Next => None,
+            SendResponse(response) => Some(response)
         }
     }
 }
@@ -22,8 +21,19 @@ pub struct Router {
 }
 
 enum RouteListener {
-    Function(Box<dyn Fn(&str, &Request, Option<Response>) -> ListenerResult + 'static + Send + Sync>),
+    Function(Box<dyn Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync>),
     Router(Router),
+}
+
+impl RouteListener {
+    fn process(&self, listener_uri: &str, request_uri: &str, request: &Request) -> ListenerResult {
+        match self {
+            RouteListener::Function(function) =>
+                function(request_uri, request),
+            RouteListener::Router(router) =>
+                router.process(&request_uri[listener_uri.len()..], request)
+        }
+    }
 }
 
 impl Router {
@@ -33,7 +43,7 @@ impl Router {
         }
     }
 
-    pub fn on(&mut self, uri: &'static str, listener: impl Fn(&str, &Request, Option<Response>) -> ListenerResult + 'static + Send + Sync) {
+    pub fn on(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
         self.listeners.push((uri, RouteListener::Function(Box::new(listener))))
     }
 
@@ -41,31 +51,23 @@ impl Router {
         self.listeners.push((uri, RouteListener::Router(router)))
     }
 
-    fn process(&self, request_uri: &str, request: &Request, mut result: ListenerResult) -> ListenerResult {
+    fn process(&self, request_uri: &str, request: &Request) -> ListenerResult {
         let listeners = self.listeners.iter()
             .filter(|(uri, _)| request_uri.starts_with(uri));
 
         for (uri, listener) in listeners {
-            result = match listener {
-                RouteListener::Function(function) => {
-                    function(request_uri, request, result.into_response())
-                }
-                RouteListener::Router(router) => {
-                    router.process(&request_uri[uri.len()..], request, result)
-                }
-            };
+            let result = listener.process(uri, request_uri, request);
 
-            result = match result {
-                SendImmediately(response) => return SendImmediately(response),
-                x => x
+            if let SendResponse(response) = result {
+                return SendResponse(response);
             }
         }
 
-        result
+        Next
     }
 
     pub fn response(&self, request: Request) -> Option<Response> {
-        self.process(&request.uri, &request, Next).into_response()
+        self.process(&request.uri, &request).into_response()
     }
 }
 
@@ -78,7 +80,7 @@ mod tests {
     use crate::common::request::Request;
     use crate::common::response::Response;
     use crate::common::status::OK_200;
-    use crate::server::router::ListenerResult::{Next, SendImmediately, SetResponse};
+    use crate::server::router::ListenerResult::{Next, SendResponse};
     use crate::server::router::Router;
 
     type FunctionCalls = Arc<Mutex<Vec<&'static str>>>;
@@ -97,11 +99,10 @@ mod tests {
         assert_eq!(format!("{:?}", calls.lock().unwrap()), format!("{:?}", expected_function_calls));
     }
 
-    fn test_route_function_args(actual_uri: &str, actual_request: &Request, actual_response: Option<Response>,
-                                expected_uri: &'static str, expected_request: Request, expected_response: Option<Response>) {
+    fn test_route_function_args(actual_uri: &str, actual_request: &Request,
+                                expected_uri: &'static str, expected_request: Request) {
         assert_eq!(actual_uri, expected_uri);
         assert_eq!(format!("{:?}", actual_request), format!("{:?}", expected_request));
-        assert_eq!(format!("{:?}", actual_response), format!("{:?}", expected_response));
     }
 
     fn test_request(uri: &'static str) -> Request {
@@ -130,10 +131,10 @@ mod tests {
     fn listener_args() {
         let mut router = Router::new();
 
-        router.on("/hello", |uri, request, response| {
+        router.on("/hello", |uri, request| {
             test_route_function_args(
-                uri, request, response,
-                "/hello", test_request("/hello"), None);
+                uri, request,
+            "/hello", test_request("/hello"));
             Next
         });
 
@@ -146,7 +147,7 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |_, _, _| {
+        router.on("/hello", move |_, _| {
             add_function_call(&calls_clone, "called");
             Next
         });
@@ -160,7 +161,7 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |_, _, _| {
+        router.on("/hello", move |_, _| {
             add_function_call(&calls_clone, "called");
             Next
         });
@@ -176,19 +177,19 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |_, _, _| {
+        router.on("/hello", move |_, _| {
             add_function_call(&calls_clone, "called 1");
             Next
         });
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |_, _, _| {
+        router.on("/hello", move |_, _| {
             add_function_call(&calls_clone, "called 2");
             Next
         });
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |_, _, _| {
+        router.on("/hello", move |_, _| {
             add_function_call(&calls_clone, "called 3");
             Next
         });
@@ -197,14 +198,14 @@ mod tests {
     }
 
     #[test]
-    fn send_immediately_blocks() {
+    fn send_response_blocks() {
         let mut router = Router::new();
 
-        router.on("/hello", |_, _, _| {
-            SendImmediately(test_response())
+        router.on("/hello", |_, _| {
+            SendResponse(test_response())
         });
 
-        router.on("/hello", |_, _, _| {
+        router.on("/hello", |_, _| {
             panic!()
         });
 
@@ -215,11 +216,11 @@ mod tests {
     fn no_routes_hit() {
         let mut router = Router::new();
 
-        router.on("/hello", |_, _, _| {
+        router.on("/hello", |_, _| {
             panic!("Should not have been called")
         });
 
-        router.on("/bye", |_, _, _| {
+        router.on("/bye", |_, _| {
             panic!("Should not have been called")
         });
 
@@ -234,28 +235,28 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/he", move |uri, request, response| {
+        router.on("/he", move |uri, request| {
             test_route_function_args(
-                uri, request, response,
-                "/hello", test_request("/hello"), None);
+                uri, request,
+                "/hello", test_request("/hello"));
             add_function_call(&calls_clone, "called /he");
             Next
         });
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hel", move |uri, request, response| {
+        router.on("/hel", move |uri, request| {
             test_route_function_args(
-                uri, request, response,
-                "/hello", test_request("/hello"), None);
+                uri, request,
+                "/hello", test_request("/hello"));
             add_function_call(&calls_clone, "called /hel");
             Next
         });
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/hell", move |uri, request, response| {
+        router.on("/hell", move |uri, request| {
             test_route_function_args(
-                uri, request, response,
-                "/hello", test_request("/hello"), None);
+                uri, request,
+                "/hello", test_request("/hello"));
             add_function_call(&calls_clone, "called /hell");
             Next
         });
@@ -269,7 +270,7 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/h", move |_, _, _| {
+        router.on("/h", move |_, _| {
             add_function_call(&calls_clone, "called");
             Next
         });
@@ -285,7 +286,7 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        router.on("", move |_, _, _| {
+        router.on("", move |_, _| {
             add_function_call(&calls_clone, "called");
             Next
         });
@@ -297,37 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn set_response() {
-        let mut router = Router::new();
-
-        router.on("/hello", move |_, _, _| {
-            SetResponse(test_response())
-        });
-
-        test_route(&router, "/hello", &function_calls(), Some(test_response()), vec![]);
-    }
-
-    #[test]
-    fn response_unset() {
-        let mut router = Router::new();
-        let calls = function_calls();
-
-        router.on("/hello", move |_, _, _| {
-            SetResponse(test_response())
-        });
-
-        let calls_clone = Arc::clone(&calls);
-        router.on("/hello", move |uri, request, response| {
-            test_route_function_args(uri, request, response,
-                                     "/hello", test_request("/hello"), Some(test_response()));
-            add_function_call(&calls_clone, "called");
-            Next
-        });
-
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
-    }
-
-    #[test]
     fn sub_router() {
         let mut router = Router::new();
         let mut sub_router = Router::new();
@@ -335,9 +305,9 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        sub_router.on("/bar", move |uri, request, response| {
-            test_route_function_args(uri, request, response,
-                                     "/bar", test_request("/foo/bar"), None);
+        sub_router.on("/bar", move |uri, request| {
+            test_route_function_args(uri, request,
+                                     "/bar", test_request("/foo/bar"));
             add_function_call(&calls_clone, "called");
             Next
         });
@@ -356,17 +326,26 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        sub_sub_router.on("/bar", move |uri, request, response| {
-            test_route_function_args(uri, request, response,
-                                     "/bar", test_request("/baz/foo/bar"), None);
-            add_function_call(&calls_clone, "called");
+        sub_sub_router.on("/bar", move |uri, request| {
+            test_route_function_args(uri, request,
+                                     "/bar", test_request("/baz/foo/bar"));
+            add_function_call(&calls_clone, "called sub sub router");
             Next
         });
+
+        let calls_clone = Arc::clone(&calls);
+        sub_router.on("/foo", move |uri, request| {
+            test_route_function_args(uri, request,
+                                     "/foo/bar", test_request("/baz/foo/bar"));
+            add_function_call(&calls_clone, "called sub router");
+            Next
+        });
+
 
         sub_router.route("/foo", sub_sub_router);
         router.route("/baz", sub_router);
 
-        test_route(&router, "/baz/foo/bar", &calls, None, vec!["called"]);
+        test_route(&router, "/baz/foo/bar", &calls, None, vec!["called sub router", "called sub sub router"]);
     }
 
     #[test]
@@ -377,13 +356,13 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        sub_router.on("/bar", move |_,_,_| {
+        sub_router.on("/bar", move |_, _| {
             add_function_call(&calls_clone, "call 1");
             Next
         });
 
         let calls_clone = Arc::clone(&calls);
-        sub_router.on("/bar", move |_,_,_| {
+        sub_router.on("/bar", move |_, _| {
             add_function_call(&calls_clone, "call 2");
             Next
         });
@@ -391,12 +370,60 @@ mod tests {
         router.route("/foo", sub_router);
 
         let calls_clone = Arc::clone(&calls);
-        router.on("/foo", move |_,_,_| {
+        router.on("/foo", move |_, _| {
             add_function_call(&calls_clone, "call 3");
             Next
         });
 
 
         test_route(&router, "/foo/bar", &calls, None, vec!["call 1", "call 2", "call 3"]);
+    }
+
+    #[test]
+    fn sub_router_sends_response() {
+        let mut router = Router::new();
+        let mut sub_router = Router::new();
+
+        sub_router.on("/bar", move |_, _| {
+            SendResponse(test_response())
+        });
+
+        sub_router.on("/bar", move |_, _| {
+            panic!("Should not call this listener")
+        });
+
+        router.route("/foo", sub_router);
+
+        router.on("/foo", move |_, _| {
+            panic!("Should not call this listener")
+        });
+
+
+        test_route(&router, "/foo/bar", &function_calls(), Some(test_response()), vec![]);
+    }
+
+    #[test]
+    fn sub_sub_router_sends_response() {
+        let mut router = Router::new();
+        let mut sub_router = Router::new();
+        let mut sub_sub_router = Router::new();
+
+        sub_sub_router.on("/bar", |_,_| {
+            SendResponse(test_response())
+        });
+
+        sub_router.route("/foo", sub_sub_router);
+
+        sub_router.on("/foo", |_,_| {
+            panic!("Should not call this listener")
+        });
+
+        router.route("/baz", sub_router);
+
+        router.on("/baz", |_,_| {
+            panic!("Should not call this listener")
+        });
+
+        test_route(&router, "/baz/foo/bar", &function_calls(), Some(test_response()), vec![]);
     }
 }

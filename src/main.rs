@@ -6,10 +6,10 @@ use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps, CONTENT_TYPE};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::config::Config;
-use my_http::server::router::ListenerResult::SendImmediately;
 use my_http::server::server::Server;
 use my_http::server::router::Router;
 use std::collections::HashMap;
+use my_http::server::router::ListenerResult::SendResponse;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
@@ -27,7 +27,7 @@ fn main() -> Result<(), Error> {
 
 fn file_router(file_path: &'static str) -> Router {
     let mut router = Router::new();
-    router.on("/", move |uri, _, _| {
+    router.on("/", move |uri, _| {
         let mut path = String::from(file_path);
         path.push_str(uri);
 
@@ -35,7 +35,7 @@ fn file_router(file_path: &'static str) -> Router {
             path.push_str("index.html")
         }
 
-        SendImmediately(file_response(&path))
+        SendResponse(file_response(&path))
     });
     router
 }
