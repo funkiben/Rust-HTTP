@@ -2,12 +2,16 @@ use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::server::router::ListenerResult::{Next, SendResponse};
 
+/// The result of a request listener.
 pub enum ListenerResult {
+    /// Continues to the next listener to be called on the request, if any.
     Next,
+    /// Stops execution of listeners for the request and immediately sends the response.
     SendResponse(Response),
 }
 
 impl ListenerResult {
+    /// Converts the given listener result into a response option.
     fn into_response(self) -> Option<Response> {
         match self {
             Next => None,
@@ -16,21 +20,27 @@ impl ListenerResult {
     }
 }
 
+/// A router that calls functions when requests with certain URI's are received.
 pub struct Router {
     listeners: Vec<(&'static str, Box<dyn Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync>)>
 }
 
 impl Router {
+    /// Creates a new empty router.
     pub fn new() -> Router {
         Router {
             listeners: Vec::new()
         }
     }
 
+    /// Calls the given function on requests with URI's that start with uri.
+    /// If uri is empty, then the function will be called on all requests directed to this router.
+    /// The first argument to the listener function is the URI local to this router.
     pub fn on_prefix(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
         self.listeners.push((uri, Box::new(listener)))
     }
 
+    /// Calls the given function on only requests with URIs that equal the given URI.
     pub fn on(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
         let listener = move |router_uri: &str, request: &Request| {
             if uri == router_uri {
@@ -41,6 +51,19 @@ impl Router {
         self.on_prefix(uri, listener);
     }
 
+    /// Like on_prefix, but instead passes all requests that start with the given URI to router.
+    /// The prefix is removed from the URI before being passed to router.
+    /// ```
+    /// use my_http::server::router::Router;
+    /// use my_http::server::router::ListenerResult::Next;
+    /// use std::collections::HashMap;
+    /// use my_http::common::request::Request;
+    ///
+    /// let mut router = Router::new();
+    /// let mut sub_router = Router::new();
+    /// sub_router.on("/bar", |_,_| { println!("will print on requests to /foo/bar"); Next });
+    /// router.route("/foo", sub_router);
+    /// ```
     pub fn route(&mut self, uri: &'static str, router: Router) {
         let listener = move |request_uri: &str, request: &Request| {
             router.process(&request_uri[uri.len()..], request)
@@ -48,6 +71,7 @@ impl Router {
         self.on_prefix(uri, listener);
     }
 
+    /// Calls listeners on the given request based on request_uri and produces a listener result.
     fn process(&self, request_uri: &str, request: &Request) -> ListenerResult {
         let listeners = self.listeners.iter()
             .filter(|(uri, _)| request_uri.starts_with(uri));
@@ -63,6 +87,8 @@ impl Router {
         Next
     }
 
+    /// Gets a response for the given request.
+    /// If the request URI has no listeners, or all listeners returned "Next", then "None" is returned.
     pub fn response(&self, request: Request) -> Option<Response> {
         self.process(&request.uri, &request).into_response()
     }

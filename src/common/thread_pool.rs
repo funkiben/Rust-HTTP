@@ -3,15 +3,20 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 
+/// A basic thread pool with a constant number of threads.
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: mpsc::Sender<Message>,
 }
 
+/// A job for a thread pool. The job may run on any thread, and will only be run once.
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+/// A message to a thread.
 enum Message {
+    /// A new job to run.
     NewJob(Job),
+    /// Message to tell the thread to return.
     Terminate,
 }
 
@@ -39,6 +44,7 @@ impl ThreadPool {
         ThreadPool { workers, sender }
     }
 
+    /// Executes the given closure on a thread.
     pub fn execute<F>(&self, f: F)
         where
             F: FnOnce() + Send + 'static,
@@ -50,6 +56,7 @@ impl ThreadPool {
 }
 
 impl Drop for ThreadPool {
+    /// Sends the termination message to all threads in the thread pool and waits for them to return.
     fn drop(&mut self) {
         for _ in &self.workers {
             self.sender.send(Message::Terminate).unwrap();
@@ -63,8 +70,11 @@ impl Drop for ThreadPool {
     }
 }
 
+/// A worker, represented by a join handler if the thread is still running, or None.
 type Worker = Option<thread::JoinHandle<()>>;
 
+/// Creates a new worker with the given receiver end of an mpsc channel.
+/// The worker will run until a Terminate message is sent to it through the channel.
 fn new_worker(receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
     let thread = thread::spawn(move || loop {
         let message = receiver.lock().unwrap().recv().unwrap();

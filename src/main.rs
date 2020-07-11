@@ -19,8 +19,8 @@ fn main() -> Result<(), Error> {
         no_route_response: Response::from(&NOT_FOUND_404),
     });
 
-    server.root_router.on("/secret/message/path", |_, _| {
-        let message = b"You found the secret path!";
+    server.router.on("/secret/message/path", |_, _| {
+        let message = b"You found the secret message!";
         SendResponse(Response {
             status: &OK_200,
             headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "26".to_string())]),
@@ -28,8 +28,8 @@ fn main() -> Result<(), Error> {
         })
     });
 
-    server.root_router.route("/middleton/", file_router("/Users/Ben/Code/middletonSite/"));
-    server.root_router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
+    server.router.route("/middleton/", file_router("/Users/Ben/Code/middletonSite/"));
+    server.router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
     server.start()
 }

@@ -1,14 +1,19 @@
 use crate::common::header::{CONTENT_LENGTH, HeaderMap, HeaderMapOps};
 use crate::common::status::Status;
 
+/// An HTTP response.
 #[derive(Debug, Clone)]
 pub struct Response {
+    /// The status.
     pub status: &'static Status,
+    /// The headers.
     pub headers: HeaderMap,
+    /// The body.
     pub body: Vec<u8>,
 }
 
 impl Response {
+    /// Creates a response with the given status. The response will have no body.
     pub fn from(status: &'static Status) -> Response {
         Response {
             status,

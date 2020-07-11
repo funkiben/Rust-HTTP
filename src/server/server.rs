@@ -17,21 +17,26 @@ const HTTP_VERSION: &str = "HTTP/1.1";
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 
+/// An HTTP server.
 pub struct Server {
+    /// The config for the server.
     pub config: Config,
-    pub root_router: Router,
+    /// The router used for handling requests received from connections
+    pub router: Router,
     no_route_response_bytes: Vec<u8>,
 }
 
 impl Server {
+    /// Creates a new HTTP server with the given config.
     pub fn new(config: Config) -> Server {
         Server {
             no_route_response_bytes: response_to_bytes(&config.no_route_response),
             config,
-            root_router: Router::new(),
+            router: Router::new(),
         }
     }
 
+    /// Starts the HTTP server. This function will block and listen for new connections.
     pub fn start(self) -> std::io::Result<()> {
         let listener = TcpListener::bind(self.config.addr)?;
 
@@ -41,11 +46,10 @@ impl Server {
 
         listener.incoming()
             .filter_map(|stream| {
-                if let Err(error) = stream {
+                stream.map_err(|error| {
                     println!("Error unwrapping new connection: {}", error);
-                    return None;
-                }
-                Some(stream.unwrap())
+                    error
+                }).ok()
             })
             .for_each(|stream| {
                 let server = Arc::clone(&server);
@@ -59,16 +63,20 @@ impl Server {
         Ok(())
     }
 
+    /// Handles a new connection.
     fn handle_connection(&self, stream: TcpStream) -> std::io::Result<()> {
         stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
 
         respond_to_requests(&stream, &stream, |request|
-            self.root_router.response(request)
+            self.router.response(request)
                 .map(|response| response_to_bytes(&response))
                 .unwrap_or(self.no_route_response_bytes.clone()))
     }
 }
 
+/// Calls the "get_response" function while valid HTTP requests can be read from the given reader.
+/// Will return as soon as the connection is closed or an invalid HTTP request is sent.
+/// The result of the "get_response" function is written to the writer before the next request is read.
 fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, get_response: impl Fn(Request) -> Vec<u8>) -> std::io::Result<()> {
     let result = read_requests(reader, |request| {
         let should_close_after_response = should_close_after_response(&request);
@@ -86,29 +94,29 @@ fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, get_response
     Ok(())
 }
 
+/// Checks if the given connection should be closed after a response is sent to the given request.
 fn should_close_after_response(request: &Request) -> bool {
     request.headers.contains_header_value(&CONNECTION, "close")
 }
 
+/// Reads requests from the given reader until there is an invalid request or the connection is closed.
+/// Calls "on_request" for each request read.
+/// If "on_request" returns true, the function will return with Ok.
 fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
     let mut reader = BufReader::new(reader);
     loop {
         let request = read_request(&mut reader);
 
         match request {
-            Ok(request) => {
-                if on_request(request) {
-                    return Ok(());
-                }
-            }
-            Err(RequestParsingError::EOF) => {
-                return Ok(());
-            }
+            Ok(request) => if on_request(request) { return Ok(()); },
+            Err(RequestParsingError::EOF) => return Ok(()),
             err => return err.map(|_| {})
         }
     }
 }
 
+/// Reads a request from the given buffered reader.
+/// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
 fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
     let first_line = read_line(reader).map_err(|err|
         if let RequestParsingError::UnexpectedEOF = err { RequestParsingError::EOF } else { err }
@@ -131,13 +139,15 @@ fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestPar
     Ok(Request { method, uri, headers, body })
 }
 
+/// Reads a request body from the reader. The body_length is used to determine how much to read.
 fn read_body(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, RequestParsingError> {
     let mut buf = vec![0; body_length];
     reader.read_exact(&mut buf).or_else(|e| Err(RequestParsingError::Reading(e)))?;
     Ok(buf)
 }
 
-// CRLF: \r\n
+/// Reads a single line, assuming the line ends in a CRLF ("\r\n").
+/// The CRLF is not included in the returned string.
 fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsingError> {
     let mut line = String::new();
     reader.read_line(&mut line).or_else(|e| Err(RequestParsingError::Reading(e)))?;
@@ -153,6 +163,7 @@ fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsing
     Ok(line)
 }
 
+/// Reads lines from the buffered reader. The returned lines do not include a CRLF.
 fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<String>, RequestParsingError> {
     let mut lines = Vec::new();
 
@@ -167,15 +178,18 @@ fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<
     }
 }
 
-fn parse_headers(mut lines: Vec<String>) -> Result<HeaderMap, RequestParsingError> {
+/// Tries to parse the given lines as headers.
+/// Each line is parsed with the format "V: K" where V is the header name and K is the header value.
+fn parse_headers(lines: Vec<String>) -> Result<HeaderMap, RequestParsingError> {
     let mut headers = HashMap::new();
-    while !lines.is_empty() {
-        let (header, value) = parse_header(lines.pop().ok_or(RequestParsingError::ParsingHeader)?)?;
+    for line in lines {
+        let (header, value) = parse_header(line)?;
         headers.add_header(header, value);
     }
     Ok(headers)
 }
 
+/// Parses the given line as a header. Splits the line at the first ": " pattern.
 fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
     let mut split = raw.splitn(2, ": ");
 
@@ -185,6 +199,8 @@ fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
     Ok((parse_header_name(header_raw), String::from(value)))
 }
 
+/// Parses the given header name. Will try to use a predefined header constant if possible to save memory.
+/// Otherwise, will return a Custom header.
 fn parse_header_name(raw: &str) -> Header {
     // TODO avoid ignore case eq
     if raw.eq_ignore_ascii_case("Connection") {
@@ -197,9 +213,8 @@ fn parse_header_name(raw: &str) -> Header {
     Custom(String::from(raw))
 }
 
-/*
-Method Request-URI HTTP-Version CRLF
- */
+/// Parses the given line as the first line of a request.
+/// The first lines of requests have the form: "Method Request-URI HTTP-Version CRLF"
 fn parse_first_line(line: String) -> Result<(Method, String, String), RequestParsingError> {
     let mut split = line.split(" ");
 
@@ -210,6 +225,7 @@ fn parse_first_line(line: String) -> Result<(Method, String, String), RequestPar
     Ok((parse_method(method_raw)?, String::from(uri), String::from(http_version)))
 }
 
+/// Parses the given string into a method. If the method is not recognized, will return an error.
 fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     if raw.eq("GET") {
         Ok(Get)
@@ -224,6 +240,7 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     }
 }
 
+/// Converts the given response into an HTTP response as bytes.
 fn response_to_bytes(response: &Response) -> Vec<u8> {
     let mut buf = format!("{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason);
 
@@ -242,17 +259,28 @@ fn response_to_bytes(response: &Response) -> Vec<u8> {
     buf
 }
 
+/// The possible errors that can be encountered when trying to parse a request.
 #[derive(Debug)]
 enum RequestParsingError {
+    /// Error reading from the reader.
     Reading(std::io::Error),
+    /// Missing method from first line of request.
     MissingMethod,
+    /// Missing URI from first line of request.
     MissingURI,
+    /// Missing HTTP version from first line of request.
     MissingHttpVersion,
+    /// Request has wrong HTTP version.
     WrongHttpVersion,
+    /// Problem parsing a request header.
     ParsingHeader,
+    /// Method is unrecognized.
     UnrecognizedMethod(String),
+    /// Header has invalid value.
     InvalidHeaderValue,
+    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request.
     UnexpectedEOF,
+    /// EOF found before any request can be read.
     EOF,
 }
 
@@ -659,8 +687,14 @@ mod tests {
             ]),
             body: Vec::from("the body".as_bytes()),
         };
-        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
-                   "HTTP/1.1 200 OK\r\nContent-Type: hello\r\nConnection: bye\r\n\r\nthe body")
+
+        let response_as_bytes = response_to_bytes(&response);
+        let response_bytes_as_string = String::from_utf8_lossy(&response_as_bytes);
+
+        assert!(
+            response_bytes_as_string.eq("HTTP/1.1 200 OK\r\nContent-Type: hello\r\nConnection: bye\r\n\r\nthe body")
+                || response_bytes_as_string.eq("HTTP/1.1 200 OK\r\nConnection: bye\r\nContent-Type: hello\r\n\r\nthe body")
+        )
     }
 
     #[test]
