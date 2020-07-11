@@ -260,6 +260,7 @@ enum RequestParsingError {
 mod tests {
     use std::cell::RefCell;
     use std::cmp::min;
+    use std::collections::HashMap;
     use std::io::{Read, Write};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -268,7 +269,6 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status::OK_200;
     use crate::server::server::{respond_to_requests, response_to_bytes};
-    use std::collections::HashMap;
 
     struct MockReader {
         data: Vec<Vec<u8>>
@@ -657,7 +657,7 @@ mod tests {
                 (CONTENT_TYPE, String::from("hello")),
                 (CONNECTION, String::from("bye")),
             ]),
-            body: Vec::from("the body".as_bytes())
+            body: Vec::from("the body".as_bytes()),
         };
         assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
                    "HTTP/1.1 200 OK\r\nContent-Type: hello\r\nConnection: bye\r\n\r\nthe body")
@@ -668,7 +668,7 @@ mod tests {
         let response = Response {
             status: &OK_200,
             headers: HashMap::new(),
-            body: vec![]
+            body: vec![],
         };
         assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
                    "HTTP/1.1 200 OK\r\n\r\n")
@@ -681,10 +681,9 @@ mod tests {
             headers: HeaderMapOps::from(vec![
                 (Header::Custom(String::from("custom header")), String::from("header value"))
             ]),
-            body: vec![]
+            body: vec![],
         };
         assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
                    "HTTP/1.1 200 OK\r\ncustom header: header value\r\n\r\n")
     }
-
 }

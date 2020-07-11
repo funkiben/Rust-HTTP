@@ -1,5 +1,5 @@
-use crate::common::method::Method;
 use crate::common::header::HeaderMap;
+use crate::common::method::Method;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Request {

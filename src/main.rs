@@ -19,12 +19,12 @@ fn main() -> Result<(), Error> {
         no_route_response: Response::from(&NOT_FOUND_404),
     });
 
-    server.root_router.on("/secret/message/path", |_,_| {
+    server.root_router.on("/secret/message/path", |_, _| {
         let message = b"You found the secret path!";
         SendResponse(Response {
             status: &OK_200,
             headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "26".to_string())]),
-            body: message.to_vec()
+            body: message.to_vec(),
         })
     });
 

@@ -32,7 +32,7 @@ impl Router {
     }
 
     pub fn on(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
-        let listener= move |router_uri: &str, request: &Request| {
+        let listener = move |router_uri: &str, request: &Request| {
             if uri == router_uri {
                 return listener(router_uri, request);
             }
@@ -448,7 +448,7 @@ mod tests {
         let calls = function_calls();
 
         let calls_clone = Arc::clone(&calls);
-        sub_router.on("/bar", move |_,_| {
+        sub_router.on("/bar", move |_, _| {
             add_function_call(&calls_clone, "called");
             Next
         });
