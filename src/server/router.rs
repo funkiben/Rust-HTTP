@@ -89,8 +89,8 @@ impl Router {
 
     /// Gets a response for the given request.
     /// If the request URI has no listeners, or all listeners returned "Next", then "None" is returned.
-    pub fn response(&self, request: Request) -> Option<Response> {
-        self.process(&request.uri, &request).into_response()
+    pub fn response(&self, request: &Request) -> Option<Response> {
+        self.process(&request.uri, request).into_response()
     }
 }
 
@@ -117,7 +117,7 @@ mod tests {
     }
 
     fn test_route(router: &Router, uri: &'static str, calls: &FunctionCalls, expected_response: Option<Response>, expected_function_calls: Vec<&'static str>) {
-        let result = router.response(test_request(uri));
+        let result = router.response(&test_request(uri));
         assert_eq!(format!("{:?}", result), format!("{:?}", expected_response));
         assert_eq!(format!("{:?}", calls.lock().unwrap()), format!("{:?}", expected_function_calls));
     }
@@ -139,7 +139,7 @@ mod tests {
 
     fn test_response() -> Response {
         Response {
-            status: &OK_200,
+            status: OK_200,
             headers: Default::default(),
             body: vec![],
         }

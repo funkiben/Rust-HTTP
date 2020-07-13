@@ -1,5 +1,5 @@
 /// An HTTP status.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct Status {
     /// The status code.
     pub code: u16,

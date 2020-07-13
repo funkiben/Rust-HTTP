@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use crate::common::header::Header::{Custom, Normal};
+use std::fmt::{Display, Formatter};
 
 /// Connection header.
-pub const CONNECTION: Header = Normal("Connection");
+pub const CONNECTION: Header = Normal("connection");
 /// Content-Length header.
-pub const CONTENT_LENGTH: Header = Normal("Content-Length");
+pub const CONTENT_LENGTH: Header = Normal("content-length");
 /// Content-Type header.
-pub const CONTENT_TYPE: Header = Normal("Content-Type");
+pub const CONTENT_TYPE: Header = Normal("content-type");
 
 /// A header. Is either a predefined "Normal" header with a static string, or a "Custom" header with a uniquely allocated String.
 /// The "Normal" variant is to reuse memory for frequently seen headers.
@@ -15,6 +16,15 @@ pub const CONTENT_TYPE: Header = Normal("Content-Type");
 pub enum Header {
     Normal(&'static str),
     Custom(String),
+}
+
+impl Display for Header {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Normal(s) => f.write_str(s),
+            Custom(s) => f.write_str(s)
+        }
+    }
 }
 
 impl Header {

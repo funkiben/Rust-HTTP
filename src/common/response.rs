@@ -5,7 +5,7 @@ use crate::common::status::Status;
 #[derive(Debug, Clone)]
 pub struct Response {
     /// The status.
-    pub status: &'static Status,
+    pub status: Status,
     /// The headers.
     pub headers: HeaderMap,
     /// The body.
@@ -14,7 +14,7 @@ pub struct Response {
 
 impl Response {
     /// Creates a response with the given status. The response will have no body.
-    pub fn from(status: &'static Status) -> Response {
+    pub fn from(status: Status) -> Response {
         Response {
             status,
             headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),

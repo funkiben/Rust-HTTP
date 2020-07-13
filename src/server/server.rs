@@ -1,5 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
@@ -23,14 +24,12 @@ pub struct Server {
     pub config: Config,
     /// The router used for handling requests received from connections
     pub router: Router,
-    no_route_response_bytes: Vec<u8>,
 }
 
 impl Server {
     /// Creates a new HTTP server with the given config.
     pub fn new(config: Config) -> Server {
         Server {
-            no_route_response_bytes: response_to_bytes(&config.no_route_response),
             config,
             router: Router::new(),
         }
@@ -53,45 +52,47 @@ impl Server {
             })
             .for_each(|stream| {
                 let server = Arc::clone(&server);
-                thread_pool.execute(move || {
-                    if let Err(error) = server.handle_connection(stream) {
-                        println!("Error handling connection: {}", error);
-                    }
-                })
+                thread_pool.execute(move || server.handle_connection(stream))
             });
 
         Ok(())
     }
 
     /// Handles a new connection.
-    fn handle_connection(&self, stream: TcpStream) -> std::io::Result<()> {
+    fn handle_connection(&self, stream: TcpStream) {
         stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
 
         respond_to_requests(&stream, &stream, |request|
-            self.router.response(request)
-                .map(|response| response_to_bytes(&response))
-                .unwrap_or(self.no_route_response_bytes.clone()))
+            self.router.response(&request)
+                .map(|req| Cow::Owned(req))
+                .unwrap_or(Cow::Borrowed(&self.config.no_route_response)),
+        )
     }
 }
 
 /// Calls the "get_response" function while valid HTTP requests can be read from the given reader.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
 /// The result of the "get_response" function is written to the writer before the next request is read.
-fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, get_response: impl Fn(Request) -> Vec<u8>) -> std::io::Result<()> {
+fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, get_response: impl Fn(Request) -> Cow<'a, Response> + 'a) {
+    let mut writer = BufWriter::new(writer);
+
     let result = read_requests(reader, |request| {
-        let should_close_after_response = should_close_after_response(&request);
-        let write_result = writer.write(&get_response(request));
-        let flush_result = writer.flush();
-        should_close_after_response || write_result.is_err() || flush_result.is_err()
+        let close = should_close_after_response(&request);
+        let write_result = write_response(&mut writer, &get_response(request));
+        close || write_result.is_err()
     });
 
     if let Err(error) = result {
-        println!("Error: {:?}", error);
-        writer.write(REQUEST_PARSING_ERROR_RESPONSE)?;
-        writer.flush()?;
+        // we dont really care if the response to an invalid request can't be written
+        respond_to_request_parsing_error(writer, error).unwrap_or(());
     }
+}
 
-    Ok(())
+/// Responds to an error parsing a request.
+fn respond_to_request_parsing_error(mut writer: impl Write, error: RequestParsingError) -> std::io::Result<()> {
+    println!("Error: {:?}", error);
+    writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
+    writer.flush()
 }
 
 /// Checks if the given connection should be closed after a response is sent to the given request.
@@ -101,7 +102,7 @@ fn should_close_after_response(request: &Request) -> bool {
 
 /// Reads requests from the given reader until there is an invalid request or the connection is closed.
 /// Calls "on_request" for each request read.
-/// If "on_request" returns true, the function will return with Ok.
+/// If "on_request" returns true, the function will return with Ok and stop reading future requests.
 fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
     let mut reader = BufReader::new(reader);
     loop {
@@ -203,14 +204,15 @@ fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
 /// Otherwise, will return a Custom header.
 fn parse_header_name(raw: &str) -> Header {
     // TODO avoid ignore case eq
-    if raw.eq_ignore_ascii_case("Connection") {
+    let raw = raw.to_ascii_lowercase();
+    if raw.eq("connection") {
         return CONNECTION;
-    } else if raw.eq_ignore_ascii_case("Content-Length") {
+    } else if raw.eq("content-length") {
         return CONTENT_LENGTH;
-    } else if raw.eq_ignore_ascii_case("Content-Type") {
+    } else if raw.eq("content-type") {
         return CONTENT_TYPE;
     }
-    Custom(String::from(raw))
+    Custom(raw)
 }
 
 /// Parses the given line as the first line of a request.
@@ -240,23 +242,19 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     }
 }
 
-/// Converts the given response into an HTTP response as bytes.
-fn response_to_bytes(response: &Response) -> Vec<u8> {
-    let mut buf = format!("{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason);
-
+/// Writes the response as bytes to the given writer.
+fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
+    // write! will call write multiple times and does not flush
+    write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
         for value in values {
-            buf.push_str(format!("{}: {}\r\n", header.as_str(), value).as_str());
+            write!(writer, "{}: {}\r\n", header, value)?;
         }
     }
-
-    buf.push_str("\r\n");
-
-    let mut buf = buf.into_bytes();
-
-    buf.extend(&response.body);
-
-    buf
+    writer.write_all("\r\n".as_bytes())?;
+    writer.write_all(&response.body)?;
+    writer.flush()?;
+    Ok(())
 }
 
 /// The possible errors that can be encountered when trying to parse a request.
@@ -286,6 +284,7 @@ enum RequestParsingError {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::cmp::min;
     use std::collections::HashMap;
@@ -295,8 +294,8 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
-    use crate::common::status::OK_200;
-    use crate::server::server::{respond_to_requests, response_to_bytes};
+    use crate::common::status::{OK_200, Status};
+    use crate::server::server::{respond_to_requests, write_response};
 
     struct MockReader {
         data: Vec<Vec<u8>>
@@ -339,7 +338,7 @@ mod tests {
         }
     }
 
-    fn test_respond_to_requests(input: Vec<&str>, responses: Vec<&str>, expected_requests: Vec<Request>, expected_output: &str) {
+    fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader {
             data: input.into_iter().map(String::from).map(String::into_bytes).collect()
         };
@@ -349,12 +348,10 @@ mod tests {
         let actual_requests = RefCell::new(Vec::new());
 
         let responses = RefCell::new(responses);
-        let result = respond_to_requests(reader, &mut writer, |request| {
+        respond_to_requests(reader, &mut writer, |request| {
             actual_requests.borrow_mut().push(request);
-            Vec::from(responses.borrow_mut().remove(0).as_bytes())
+            Cow::Owned(responses.borrow_mut().remove(0))
         });
-
-        assert!(result.is_ok());
 
         let actual_output = writer.flushed.concat();
         let actual_output = String::from_utf8_lossy(&actual_output);
@@ -368,10 +365,20 @@ mod tests {
     }
 
     fn test_respond_to_requests_with_last_response(input: Vec<&str>, expected_requests: Vec<Request>, last_response: &str) {
-        let mut responses: Vec<String> = (0..expected_requests.len()).map(|n| n.to_string()).collect();
-        responses.push(String::from(last_response));
-        let responses: Vec<&str> = responses.iter().map(|s| s.as_str()).collect();
-        let expected_output: String = responses.concat();
+        let responses: Vec<Response> =
+            (0..expected_requests.len())
+                .map(|code| Response {
+                    status: Status { code: code as u16, reason: "" },
+                    headers: HashMap::new(),
+                    body: vec![],
+                })
+                .collect();
+        let mut expected_output: String = responses.iter().map(|res| {
+            let mut buf: Vec<u8> = vec![];
+            write_response(&mut buf, res).unwrap();
+            String::from_utf8_lossy(&buf).into_owned()
+        }).collect();
+        expected_output.push_str(last_response);
         test_respond_to_requests(input, responses, expected_requests, &expected_output);
     }
 
@@ -393,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn one_request_multiple_fragments() {
+    fn one_request_fragmented() {
         test_respond_to_requests_no_bad(
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
             vec![Request {
@@ -492,6 +499,21 @@ mod tests {
     }
 
     #[test]
+    fn one_request_with_body_fragmented() {
+        let body = b"hello";
+        test_respond_to_requests_no_bad(
+            vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
+            vec![Request {
+                uri: String::from("/"),
+                method: Method::Get,
+                headers: HeaderMapOps::from(vec![
+                    (CONTENT_LENGTH, String::from("5")),
+                ]),
+                body: body.to_vec(),
+            }])
+    }
+
+    #[test]
     fn two_requests_with_bodies() {
         let body1 = b"hello";
         let body2 = b"goodbye";
@@ -522,6 +544,34 @@ mod tests {
     }
 
     #[test]
+    fn one_request_with_large_body() {
+        let body = b"ergiergjhlisuehrlgisuehrlgisuehrlgiushelrgiushelriguheisurhgl ise\
+        uhrg laiuwe````hrg ;aoiwhg aw4tyg 8o3w74go 8w475g\no 8w475hgo 8w475hgo 84w75hgo 8w347hfo g83qw7h4go\
+         q837hgp 9q384h~~~gp 9qw\r\n385hgp q9384htpq9 38\r\nwuhf iwourehafgliweurhglaieruhgq9w348gh q9384ufhq\
+         uerhgfq 934g\\hq934h|][;[.',,/.fg 9w`234145365uerhfg iawo!@#$$%#^$%&^$%^(&*^)(_)+_){P.;o\\/]'o;\n\n\r\n
+         \r\n\n\r\n\r]/li][.                                                                       \
+         \n\n\n\n\n\n\n\n\n     ^$%@#%!@%!@$%@#$^&%*&&^&()&)(|>wiuerghwiefujwouegowogjoe rijgoe rg\
+         eriopgjeorgj eorgij woergij owgj 9348t9 348uqwtp 3874hg ow3489ghqp 9348ghf qp3498ugh pq\
+         3q489g pq3498gf qp3948fh qp39ruhgwirughp9q34ughpq34u9gh pq3g\
+         3q498g7 hq3o84g7h q3o847gh qp3948fh pq9wufhp q9w4hgpq9w47hgpq39wu4hfqw4ufhwq4\
+         3q8974fh q3489fh qopw4389fhpq9w4ghqpw94ghpqw94ufghpw9fhupq9w4ghpqw94ghpq\
+         woeifjoweifjowijfow ejf owijf ejf qefasfoP OJP JP JE FPIJEPF IWJEPFI JWPEF W\
+         WEIOFJ WEFJ WPEIGJH 0348HG39 84GHJF039 84JF0394JF0 384G0348HGOWEIRGJPRGOJPE\
+         WEIFOJ WEOFIJ PQIEGHQPIGH024UHG034IUHJG0WIUEJF0EIWJGF0WEGH 0WEGH W0IEJF PWIEJFG PWEF\
+         W0EFJ 0WEFJ -WIJF-024JG0F34IGJ03 4I JG03W4IJG02HG0IQJGW-EIGJWPIEJGWeuf";
+        test_respond_to_requests_no_bad(
+            vec!["GET / HTTP/1.1\r\ncontent-length: 1131\r\n\r\n", &String::from_utf8_lossy(body)],
+            vec![Request {
+                uri: String::from("/"),
+                method: Method::Get,
+                headers: HeaderMapOps::from(vec![
+                    (CONTENT_LENGTH, String::from("1131")),
+                ]),
+                body: body.to_vec(),
+            }])
+    }
+
+    #[test]
     fn two_requests_connection_close_header() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\nconnection: close\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
@@ -533,6 +583,23 @@ mod tests {
                     body: vec![],
                 }
             ])
+    }
+
+
+    #[test]
+    fn header_with_multiple_colons() {
+        test_respond_to_requests_no_bad(
+            vec!["GET / HTTP/1.1\r\nhello: value: foo\r\n\r\n"],
+            vec![
+                Request {
+                    uri: String::from("/"),
+                    method: Method::Get,
+                    headers: HeaderMapOps::from(vec![
+                        (Header::Custom(String::from("hello")), String::from("value: foo"))
+                    ]),
+                    body: vec![],
+                }
+            ]);
     }
 
     #[test]
@@ -678,9 +745,9 @@ mod tests {
     }
 
     #[test]
-    fn response_with_headers_and_body_to_bytes() {
+    fn write_response_with_headers_and_body() {
         let response = Response {
-            status: &OK_200,
+            status: OK_200,
             headers: HeaderMapOps::from(vec![
                 (CONTENT_TYPE, String::from("hello")),
                 (CONNECTION, String::from("bye")),
@@ -688,36 +755,42 @@ mod tests {
             body: Vec::from("the body".as_bytes()),
         };
 
-        let response_as_bytes = response_to_bytes(&response);
-        let response_bytes_as_string = String::from_utf8_lossy(&response_as_bytes);
+        let mut writer = MockWriter { data: vec![], flushed: vec![] };
+
+        write_response(&mut writer, &response).unwrap();
+
+        let bytes = writer.flushed.concat();
+        let response_bytes_as_string = String::from_utf8_lossy(&bytes);
 
         assert!(
-            response_bytes_as_string.eq("HTTP/1.1 200 OK\r\nContent-Type: hello\r\nConnection: bye\r\n\r\nthe body")
-                || response_bytes_as_string.eq("HTTP/1.1 200 OK\r\nConnection: bye\r\nContent-Type: hello\r\n\r\nthe body")
+            response_bytes_as_string.eq("HTTP/1.1 200 OK\r\ncontent-type: hello\r\nconnection: bye\r\n\r\nthe body")
+                || response_bytes_as_string.eq("HTTP/1.1 200 OK\r\nconnection: bye\r\ncontent-type: hello\r\n\r\nthe body")
         )
     }
 
     #[test]
     fn response_no_header_or_body_to_bytes() {
         let response = Response {
-            status: &OK_200,
+            status: OK_200,
             headers: HashMap::new(),
             body: vec![],
         };
-        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
-                   "HTTP/1.1 200 OK\r\n\r\n")
+        let mut buf: Vec<u8> = vec![];
+        write_response(&mut buf, &response).unwrap();
+        assert_eq!(String::from_utf8_lossy(&buf), "HTTP/1.1 200 OK\r\n\r\n")
     }
 
     #[test]
     fn response_one_header_no_body_to_bytes() {
         let response = Response {
-            status: &OK_200,
+            status: OK_200,
             headers: HeaderMapOps::from(vec![
                 (Header::Custom(String::from("custom header")), String::from("header value"))
             ]),
             body: vec![],
         };
-        assert_eq!(String::from_utf8_lossy(&response_to_bytes(&response)),
-                   "HTTP/1.1 200 OK\r\ncustom header: header value\r\n\r\n")
+        let mut buf: Vec<u8> = vec![];
+        write_response(&mut buf, &response).unwrap();
+        assert_eq!(String::from_utf8_lossy(&buf), "HTTP/1.1 200 OK\r\ncustom header: header value\r\n\r\n")
     }
 }
