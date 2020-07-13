@@ -210,7 +210,7 @@ fn parse_header_name(raw: &str) -> Header {
     } else if "content-type".eq_ignore_ascii_case(raw) {
         return CONTENT_TYPE;
     }
-    Custom(String::from(raw))
+    Custom(raw.to_lowercase())
 }
 
 /// Parses the given line as the first line of a request.
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn one_request_with_headers_weird_case() {
         test_respond_to_requests_no_bad(
-            vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsomething: hello there goodbye\r\n\r\n"],
+            vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
                 method: Method::Get,
@@ -787,6 +787,28 @@ mod tests {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
             vec![],
+            "HTTP/1.1 400 Bad Request\r\n\r\n");
+    }
+
+    #[test]
+    fn request_with_negative_content_length() {
+        test_respond_to_requests_with_last_response(
+            vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
+            vec![],
+            "HTTP/1.1 400 Bad Request\r\n\r\n");
+    }
+
+    #[test]
+    fn request_with_0_content_length() {
+        test_respond_to_requests_with_last_response(
+            vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\nhello"],
+            vec![
+                Request {
+                    uri: String::from("/"),
+                    method: Method::Get,
+                    headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),
+                    body: vec![],
+                }],
             "HTTP/1.1 400 Bad Request\r\n\r\n");
     }
 

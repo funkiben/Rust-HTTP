@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
 use crate::common::header::Header::{Custom, Normal};
-use std::fmt::{Display, Formatter};
 
 /// Connection header.
 pub const CONNECTION: Header = Normal("connection");
@@ -80,7 +80,7 @@ impl HeaderMapOps for HeaderMap {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps, HeaderMap};
+    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderMapOps};
 
     #[test]
     fn header_map() {
