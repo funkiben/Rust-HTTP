@@ -203,16 +203,14 @@ fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
 /// Parses the given header name. Will try to use a predefined header constant if possible to save memory.
 /// Otherwise, will return a Custom header.
 fn parse_header_name(raw: &str) -> Header {
-    // TODO avoid ignore case eq
-    let raw = raw.to_ascii_lowercase();
-    if raw.eq("connection") {
+    if "connection".eq_ignore_ascii_case(raw) {
         return CONNECTION;
-    } else if raw.eq("content-length") {
+    } else if "content-length".eq_ignore_ascii_case(raw) {
         return CONTENT_LENGTH;
-    } else if raw.eq("content-type") {
+    } else if "content-type".eq_ignore_ascii_case(raw) {
         return CONTENT_TYPE;
     }
-    Custom(raw)
+    Custom(String::from(raw))
 }
 
 /// Parses the given line as the first line of a request.
@@ -478,6 +476,54 @@ mod tests {
                     (CONTENT_LENGTH, String::from("0")),
                     (CONNECTION, String::from("close")),
                     (Header::Custom(String::from("something")), String::from("hello there goodbye")),
+                ]),
+                body: vec![],
+            }])
+    }
+
+    #[test]
+    fn one_request_with_repeated_headers() {
+        test_respond_to_requests_no_bad(
+            vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
+            vec![Request {
+                uri: String::from("/"),
+                method: Method::Get,
+                headers: HeaderMapOps::from(vec![
+                    (CONTENT_LENGTH, String::from("0")),
+                    (CONTENT_LENGTH, String::from("0")),
+                    (Header::Custom(String::from("something")), String::from("value 1")),
+                    (Header::Custom(String::from("something")), String::from("value 2")),
+                ]),
+                body: vec![],
+            }])
+    }
+
+    #[test]
+    fn one_request_with_headers_weird_case() {
+        test_respond_to_requests_no_bad(
+            vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsomething: hello there goodbye\r\n\r\n"],
+            vec![Request {
+                uri: String::from("/"),
+                method: Method::Get,
+                headers: HeaderMapOps::from(vec![
+                    (CONTENT_LENGTH, String::from("0")),
+                    (CONNECTION, String::from("close")),
+                    (Header::Custom(String::from("something")), String::from("hello there goodbye")),
+                ]),
+                body: vec![],
+            }])
+    }
+
+    #[test]
+    fn one_request_with_headers_only_colon_and_space() {
+        test_respond_to_requests_no_bad(
+            vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
+            vec![Request {
+                uri: String::from("/"),
+                method: Method::Get,
+                headers: HeaderMapOps::from(vec![
+                    (Header::Custom(String::from("")), String::from("")),
+                    (Header::Custom(String::from("")), String::from("")),
                 ]),
                 body: vec![],
             }])
