@@ -1,6 +1,11 @@
+/// Config for HTTP servers.
+pub use config::Config;
 /// HTTP server.
-pub mod server;
-/// Config for HTTP server.
-pub mod config;
+pub use server::Server;
+
+mod server;
+mod config;
+
 /// Router for handling requests sent to an HTTP server.
 pub mod router;
+mod oos;

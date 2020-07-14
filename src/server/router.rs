@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::server::router::ListenerResult::{Next, SendResponse};
+use crate::server::oos::Oos;
+use crate::server::router::ListenerResult::{Next, SendResponse, SendStaticResponse};
 
 /// The result of a request listener.
 pub enum ListenerResult {
@@ -8,14 +11,16 @@ pub enum ListenerResult {
     Next,
     /// Stops execution of listeners for the request and immediately sends the response.
     SendResponse(Response),
+    SendStaticResponse(Arc<Response>),
 }
 
 impl ListenerResult {
     /// Converts the given listener result into a response option.
-    fn into_response(self) -> Option<Response> {
+    fn into_response(self) -> Option<Oos<Response>> {
         match self {
             Next => None,
-            SendResponse(response) => Some(response)
+            SendResponse(response) => Some(Oos::Owned(response)),
+            SendStaticResponse(response) => Some(Oos::Shared(response))
         }
     }
 }
@@ -79,9 +84,11 @@ impl Router {
         for (_, listener) in listeners {
             let result = listener(request_uri, request);
 
-            if let SendResponse(response) = result {
-                return SendResponse(response);
+            if let Next = result {
+                continue;
             }
+
+            return result;
         }
 
         Next
@@ -89,7 +96,7 @@ impl Router {
 
     /// Gets a response for the given request.
     /// If the request URI has no listeners, or all listeners returned "Next", then "None" is returned.
-    pub fn response(&self, request: &Request) -> Option<Response> {
+    pub fn response(&self, request: &Request) -> Option<Oos<Response>> {
         self.process(&request.uri, request).into_response()
     }
 }
@@ -97,6 +104,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::ops::Deref;
     use std::sync::{Arc, Mutex};
 
     use crate::common::method::Method;
@@ -117,8 +125,14 @@ mod tests {
     }
 
     fn test_route(router: &Router, uri: &'static str, calls: &FunctionCalls, expected_response: Option<Response>, expected_function_calls: Vec<&'static str>) {
-        let result = router.response(&test_request(uri));
-        assert_eq!(format!("{:?}", result), format!("{:?}", expected_response));
+        let actual_response = router.response(&test_request(uri));
+        match (actual_response, expected_response) {
+            (Some(actual_response), Some(expected_response)) =>
+                assert_eq!(format!("{:?}", actual_response.deref()), format!("{:?}", expected_response)),
+            (Some(_), None) => panic!("Expected no response but got one"),
+            (None, Some(_)) => panic!("Expected a response but got none"),
+            (_, _) => {}
+        }
         assert_eq!(format!("{:?}", calls.lock().unwrap()), format!("{:?}", expected_function_calls));
     }
 

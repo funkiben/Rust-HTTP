@@ -1,7 +1,7 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -17,6 +17,7 @@ use crate::server::router::Router;
 const HTTP_VERSION: &str = "HTTP/1.1";
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
+const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
 /// An HTTP server.
 pub struct Server {
@@ -62,24 +63,47 @@ impl Server {
     fn handle_connection(&self, stream: TcpStream) {
         stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
 
-        respond_to_requests(&stream, &stream, |request|
-            self.router.response(&request)
-                .map(|req| Cow::Owned(req))
-                .unwrap_or(Cow::Borrowed(&self.config.no_route_response)),
-        )
+        // respond_to_requests(&stream, &stream, |request|
+        //     self.router.response(&request)
+        //         .map(|req| Cow::Owned(req))
+        //         .unwrap_or(Cow::Borrowed(&self.config.no_route_response)),
+        // )
+        respond_to_requests(&stream, &stream, &self.router)
     }
 }
 
-/// Calls the "get_response" function while valid HTTP requests can be read from the given reader.
+// /// Calls the "get_response" function while valid HTTP requests can be read from the given reader.
+// /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
+// /// The result of the "get_response" function is written to the writer before the next request is read.
+// fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, get_response: impl Fn(Request) -> Option<Ooc<Response>> + 'a) {
+//     let mut writer = BufWriter::new(writer);
+//
+//     let result = read_requests(reader, |request| {
+//         let close = should_close_after_response(&request);
+//         let response = get_response(request);
+//         let write_result = write_response(&mut writer, &get_response(request));
+//         close || write_result.is_err()
+//     });
+//
+//     if let Err(error) = result {
+//         // we dont really care if the response to an invalid request can't be written
+//         respond_to_request_parsing_error(writer, error).unwrap_or(());
+//     }
+// }
+
+/// Uses the given router to respond to requests read from reader. Writes responses to writer.
+/// If the router has no route for a request, then a 404 response with no body is returned.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-/// The result of the "get_response" function is written to the writer before the next request is read.
-fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, get_response: impl Fn(Request) -> Cow<'a, Response> + 'a) {
+fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, router: &Router) {
     let mut writer = BufWriter::new(writer);
 
     let result = read_requests(reader, |request| {
-        let close = should_close_after_response(&request);
-        let write_result = write_response(&mut writer, &get_response(request));
-        close || write_result.is_err()
+        let write_result = if let Some(response) = router.response(&request) {
+            write_response(&mut writer, response.deref())
+        } else {
+            writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
+        };
+        should_close_after_response(&request) || write_result.is_err()
     });
 
     if let Err(error) = result {
@@ -282,17 +306,18 @@ enum RequestParsingError {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-    use std::cell::RefCell;
     use std::cmp::min;
     use std::collections::HashMap;
     use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
     use crate::common::status::{OK_200, Status};
+    use crate::server::router::ListenerResult::SendResponse;
+    use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
 
     struct MockReader {
@@ -343,19 +368,24 @@ mod tests {
 
         let mut writer = MockWriter { data: vec![], flushed: vec![] };
 
-        let actual_requests = RefCell::new(Vec::new());
+        let mut router = Router::new();
 
-        let responses = RefCell::new(responses);
-        respond_to_requests(reader, &mut writer, |request| {
-            actual_requests.borrow_mut().push(request);
-            Cow::Owned(responses.borrow_mut().remove(0))
+        let actual_requests = Arc::new(Mutex::new(vec![]));
+        let responses = Arc::new(Mutex::new(responses));
+
+        let actual_requests_clone = Arc::clone(&actual_requests);
+        router.on_prefix("", move |_, request| {
+            actual_requests_clone.lock().unwrap().push(request.clone());
+            SendResponse(responses.lock().unwrap().remove(0))
         });
+
+        respond_to_requests(reader, &mut writer, &router);
 
         let actual_output = writer.flushed.concat();
         let actual_output = String::from_utf8_lossy(&actual_output);
 
         assert_eq!(expected_output, actual_output);
-        assert_eq!(expected_requests, actual_requests.into_inner());
+        assert_eq!(expected_requests, actual_requests.lock().unwrap().to_vec());
     }
 
     fn test_respond_to_requests_no_bad(input: Vec<&str>, expected_requests: Vec<Request>) {

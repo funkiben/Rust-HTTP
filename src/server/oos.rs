@@ -1,10 +1,11 @@
-use std::sync::Arc;
 use std::ops::Deref;
-use crate::common::oos::Oos::{Shared, Owned};
+use std::sync::Arc;
+
+use crate::server::oos::Oos::{Owned, Shared};
 
 pub enum Oos<T> {
     Shared(Arc<T>),
-    Owned(T)
+    Owned(T),
 }
 
 impl<T> Deref for Oos<T> {
@@ -12,7 +13,7 @@ impl<T> Deref for Oos<T> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Shared(v) => v,
+            Shared(v) => v.deref(),
             Owned(v) => v
         }
     }
