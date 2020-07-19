@@ -5,7 +5,7 @@ use crate::common::response::Response;
 use crate::server::router::ListenerResult::Next;
 
 /// The result of a request listener.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ListenerResult {
     /// Continues to the next listener to be called on the request, if any.
     Next,
@@ -67,24 +67,16 @@ impl Router {
 
     /// Calls listeners on the given request based on request_uri and produces a listener result.
     fn result_internal(&self, request_uri: &str, request: &Request) -> ListenerResult {
-        let listeners = self.listeners.iter()
-            .filter(|(uri, _)| request_uri.starts_with(uri));
-
-        for (_, listener) in listeners {
-            let result = listener(request_uri, request);
-
-            if let Next = result {
-                continue;
-            }
-
-            return result;
-        }
-
-        Next
+        self.listeners.iter()
+            .filter(|(uri, _)| request_uri.starts_with(uri))
+            .map(|(_,listener)| listener(request_uri, request))
+            .find(|result| *result != Next )
+            .unwrap_or(Next)
     }
 
-    /// Gets a response for the given request.
-    /// If the request URI has no listeners, or all listeners returned "Next", then "None" is returned.
+    /// Gets the result from listeners that are called on the given request.
+    /// The result from the last listener to be called on the given request is returned.
+    /// If no listeners were called, then "Next" is returned.
     pub fn result(&self, request: &Request) -> ListenerResult {
         self.result_internal(&request.uri, request)
     }
