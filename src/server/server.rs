@@ -273,7 +273,7 @@ fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Resu
             write!(writer, "{}: {}\r\n", header, value)?;
         }
     }
-    writer.write_all("\r\n".as_bytes())?;
+    writer.write_all(b"\r\n")?;
     writer.write_all(&response.body)?;
     writer.flush()?;
     Ok(())
