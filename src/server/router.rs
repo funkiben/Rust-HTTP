@@ -2,27 +2,16 @@ use std::sync::Arc;
 
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::server::oos::Oos;
-use crate::server::router::ListenerResult::{Next, SendResponse, SendStaticResponse};
+use crate::server::router::ListenerResult::Next;
 
 /// The result of a request listener.
+#[derive(Debug)]
 pub enum ListenerResult {
     /// Continues to the next listener to be called on the request, if any.
     Next,
     /// Stops execution of listeners for the request and immediately sends the response.
     SendResponse(Response),
-    SendStaticResponse(Arc<Response>),
-}
-
-impl ListenerResult {
-    /// Converts the given listener result into a response option.
-    fn into_response(self) -> Option<Oos<Response>> {
-        match self {
-            Next => None,
-            SendResponse(response) => Some(Oos::Owned(response)),
-            SendStaticResponse(response) => Some(Oos::Shared(response))
-        }
-    }
+    SendResponseArc(Arc<Response>),
 }
 
 /// A router that calls functions when requests with certain URI's are received.
@@ -71,13 +60,13 @@ impl Router {
     /// ```
     pub fn route(&mut self, uri: &'static str, router: Router) {
         let listener = move |request_uri: &str, request: &Request| {
-            router.process(&request_uri[uri.len()..], request)
+            router.result_internal(&request_uri[uri.len()..], request)
         };
         self.on_prefix(uri, listener);
     }
 
     /// Calls listeners on the given request based on request_uri and produces a listener result.
-    fn process(&self, request_uri: &str, request: &Request) -> ListenerResult {
+    fn result_internal(&self, request_uri: &str, request: &Request) -> ListenerResult {
         let listeners = self.listeners.iter()
             .filter(|(uri, _)| request_uri.starts_with(uri));
 
@@ -96,8 +85,8 @@ impl Router {
 
     /// Gets a response for the given request.
     /// If the request URI has no listeners, or all listeners returned "Next", then "None" is returned.
-    pub fn response(&self, request: &Request) -> Option<Oos<Response>> {
-        self.process(&request.uri, request).into_response()
+    pub fn result(&self, request: &Request) -> ListenerResult {
+        self.result_internal(&request.uri, request)
     }
 }
 
@@ -112,7 +101,7 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status::OK_200;
     use crate::server::router::ListenerResult::{Next, SendResponse};
-    use crate::server::router::Router;
+    use crate::server::router::{Router, ListenerResult};
 
     type FunctionCalls = Arc<Mutex<Vec<&'static str>>>;
 
@@ -124,15 +113,9 @@ mod tests {
         calls.lock().unwrap().push(call)
     }
 
-    fn test_route(router: &Router, uri: &'static str, calls: &FunctionCalls, expected_response: Option<Response>, expected_function_calls: Vec<&'static str>) {
-        let actual_response = router.response(&test_request(uri));
-        match (actual_response, expected_response) {
-            (Some(actual_response), Some(expected_response)) =>
-                assert_eq!(format!("{:?}", actual_response.deref()), format!("{:?}", expected_response)),
-            (Some(_), None) => panic!("Expected no response but got one"),
-            (None, Some(_)) => panic!("Expected a response but got none"),
-            (_, _) => {}
-        }
+    fn test_route(router: &Router, uri: &'static str, calls: &FunctionCalls, expected_response: ListenerResult, expected_function_calls: Vec<&'static str>) {
+        let actual_response = router.result(&test_request(uri));
+        assert_eq!(format!("{:?}", actual_response), format!("{:?}", expected_response));
         assert_eq!(format!("{:?}", calls.lock().unwrap()), format!("{:?}", expected_function_calls));
     }
 
@@ -161,7 +144,7 @@ mod tests {
 
     #[test]
     fn no_routes() {
-        test_route(&Router::new(), "", &function_calls(), None, vec![])
+        test_route(&Router::new(), "", &function_calls(), Next, vec![])
     }
 
     #[test]
@@ -175,7 +158,7 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &function_calls(), None, vec![]);
+        test_route(&router, "/hello", &function_calls(), Next, vec![]);
     }
 
     #[test]
@@ -189,7 +172,7 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called"]);
     }
 
     #[test]
@@ -203,9 +186,9 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
-        test_route(&router, "/hello", &calls, None, vec!["called", "called"]);
-        test_route(&router, "/hello", &calls, None, vec!["called", "called", "called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called", "called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called", "called", "called"]);
     }
 
     #[test]
@@ -231,7 +214,7 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called 1", "called 2", "called 3"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called 1", "called 2", "called 3"]);
     }
 
     #[test]
@@ -246,7 +229,7 @@ mod tests {
             panic!()
         });
 
-        test_route(&router, "/hello", &function_calls(), Some(test_response()), vec![]);
+        test_route(&router, "/hello", &function_calls(), SendResponse(test_response()), vec![]);
     }
 
     #[test]
@@ -261,9 +244,9 @@ mod tests {
             panic!("Should not have been called")
         });
 
-        test_route(&router, "/goodbye", &function_calls(), None, vec![]);
-        test_route(&router, "blahblah", &function_calls(), None, vec![]);
-        test_route(&router, "/hihihi", &function_calls(), None, vec![]);
+        test_route(&router, "/goodbye", &function_calls(), Next, vec![]);
+        test_route(&router, "blahblah", &function_calls(), Next, vec![]);
+        test_route(&router, "/hihihi", &function_calls(), Next, vec![]);
     }
 
     #[test]
@@ -298,7 +281,7 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called /he", "called /hel", "called /hell"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called /he", "called /hel", "called /hell"]);
     }
 
     #[test]
@@ -312,9 +295,9 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
-        test_route(&router, "/hi", &calls, None, vec!["called", "called"]);
-        test_route(&router, "/hola", &calls, None, vec!["called", "called", "called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called"]);
+        test_route(&router, "/hi", &calls, Next, vec!["called", "called"]);
+        test_route(&router, "/hola", &calls, Next, vec!["called", "called", "called"]);
     }
 
     #[test]
@@ -328,10 +311,10 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
-        test_route(&router, "/goodbye", &calls, None, vec!["called", "called"]);
-        test_route(&router, "blahblah", &calls, None, vec!["called", "called", "called"]);
-        test_route(&router, "/ewf/rg/wef", &calls, None, vec!["called", "called", "called", "called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called"]);
+        test_route(&router, "/goodbye", &calls, Next, vec!["called", "called"]);
+        test_route(&router, "blahblah", &calls, Next, vec!["called", "called", "called"]);
+        test_route(&router, "/ewf/rg/wef", &calls, Next, vec!["called", "called", "called", "called"]);
     }
 
     #[test]
@@ -351,7 +334,7 @@ mod tests {
 
         router.route("/foo", sub_router);
 
-        test_route(&router, "/foo/bar", &calls, None, vec!["called"]);
+        test_route(&router, "/foo/bar", &calls, Next, vec!["called"]);
     }
 
     #[test]
@@ -382,7 +365,7 @@ mod tests {
         sub_router.route("/foo", sub_sub_router);
         router.route("/baz", sub_router);
 
-        test_route(&router, "/baz/foo/bar", &calls, None, vec!["called sub router", "called sub sub router"]);
+        test_route(&router, "/baz/foo/bar", &calls, Next, vec!["called sub router", "called sub sub router"]);
     }
 
     #[test]
@@ -413,7 +396,7 @@ mod tests {
         });
 
 
-        test_route(&router, "/foo/bar", &calls, None, vec!["call 1", "call 2", "call 3"]);
+        test_route(&router, "/foo/bar", &calls, Next, vec!["call 1", "call 2", "call 3"]);
     }
 
     #[test]
@@ -436,7 +419,7 @@ mod tests {
         });
 
 
-        test_route(&router, "/foo/bar", &function_calls(), Some(test_response()), vec![]);
+        test_route(&router, "/foo/bar", &function_calls(), SendResponse(test_response()), vec![]);
     }
 
     #[test]
@@ -461,7 +444,7 @@ mod tests {
             panic!("Should not call this listener")
         });
 
-        test_route(&router, "/baz/foo/bar", &function_calls(), Some(test_response()), vec![]);
+        test_route(&router, "/baz/foo/bar", &function_calls(), SendResponse(test_response()), vec![]);
     }
 
     #[test]
@@ -475,9 +458,9 @@ mod tests {
             Next
         });
 
-        test_route(&router, "/hello", &calls, None, vec!["called"]);
-        test_route(&router, "/hello/hello", &calls, None, vec!["called"]);
-        test_route(&router, "/bye", &calls, None, vec!["called"]);
+        test_route(&router, "/hello", &calls, Next, vec!["called"]);
+        test_route(&router, "/hello/hello", &calls, Next, vec!["called"]);
+        test_route(&router, "/bye", &calls, Next, vec!["called"]);
     }
 
     #[test]
@@ -495,9 +478,9 @@ mod tests {
 
         router.route("/foo", sub_router);
 
-        test_route(&router, "/foo/bar", &calls, None, vec!["called"]);
-        test_route(&router, "/foo/bar/baz", &calls, None, vec!["called"]);
-        test_route(&router, "/foo/bariugw", &calls, None, vec!["called"]);
-        test_route(&router, "/foofoo", &calls, None, vec!["called"]);
+        test_route(&router, "/foo/bar", &calls, Next, vec!["called"]);
+        test_route(&router, "/foo/bar/baz", &calls, Next, vec!["called"]);
+        test_route(&router, "/foo/bariugw", &calls, Next, vec!["called"]);
+        test_route(&router, "/foofoo", &calls, Next, vec!["called"]);
     }
 }

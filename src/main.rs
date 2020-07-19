@@ -8,7 +8,7 @@ use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::{Config, Server};
-use my_http::server::router::ListenerResult::{SendResponse, SendStaticResponse};
+use my_http::server::router::ListenerResult::{SendResponse, SendResponseArc};
 use my_http::server::router::Router;
 
 fn main() -> Result<(), Error> {
@@ -50,7 +50,7 @@ fn file_router(directory: &'static str) -> Router {
 
         let response = cache.entry(path.clone()).or_insert_with(|| Arc::new(file_response(&path)));
 
-        SendStaticResponse(Arc::clone(&response))
+        SendResponseArc(Arc::clone(&response))
         // SendResponse(file_response(&path))
     });
 

@@ -1,8 +1,5 @@
 extern crate my_http;
 
-use std::net::TcpStream;
-use std::thread::spawn;
-
 use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -12,6 +11,7 @@ use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::thread_pool::ThreadPool;
 use crate::server::config::Config;
+use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 
 const HTTP_VERSION: &str = "HTTP/1.1";
@@ -98,10 +98,10 @@ fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, router: &Rou
     let mut writer = BufWriter::new(writer);
 
     let result = read_requests(reader, |request| {
-        let write_result = if let Some(response) = router.response(&request) {
-            write_response(&mut writer, response.deref())
-        } else {
-            writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
+        let write_result = match router.result(&request) {
+            SendResponse(response) => write_response(&mut writer, &response),
+            SendResponseArc(response) => write_response(&mut writer, &response),
+            Next => writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
         };
         should_close_after_response(&request) || write_result.is_err()
     });

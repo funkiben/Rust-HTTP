@@ -8,4 +8,3 @@ mod config;
 
 /// Router for handling requests sent to an HTTP server.
 pub mod router;
-mod oos;
