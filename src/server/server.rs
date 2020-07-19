@@ -63,33 +63,9 @@ impl Server {
     fn handle_connection(&self, stream: TcpStream) {
         stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
 
-        // respond_to_requests(&stream, &stream, |request|
-        //     self.router.response(&request)
-        //         .map(|req| Cow::Owned(req))
-        //         .unwrap_or(Cow::Borrowed(&self.config.no_route_response)),
-        // )
         respond_to_requests(&stream, &stream, &self.router)
     }
 }
-
-// /// Calls the "get_response" function while valid HTTP requests can be read from the given reader.
-// /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-// /// The result of the "get_response" function is written to the writer before the next request is read.
-// fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, get_response: impl Fn(Request) -> Option<Ooc<Response>> + 'a) {
-//     let mut writer = BufWriter::new(writer);
-//
-//     let result = read_requests(reader, |request| {
-//         let close = should_close_after_response(&request);
-//         let response = get_response(request);
-//         let write_result = write_response(&mut writer, &get_response(request));
-//         close || write_result.is_err()
-//     });
-//
-//     if let Err(error) = result {
-//         // we dont really care if the response to an invalid request can't be written
-//         respond_to_request_parsing_error(writer, error).unwrap_or(());
-//     }
-// }
 
 /// Uses the given router to respond to requests read from reader. Writes responses to writer.
 /// If the router has no route for a request, then a 404 response with no body is returned.

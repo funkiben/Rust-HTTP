@@ -27,7 +27,7 @@ fn main() -> Result<(), Error> {
         })
     });
 
-    server.router.route("/middleton/", file_router("/Users/Ben/Code/middletonSite/"));
+    server.router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
     server.router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
     server.start()

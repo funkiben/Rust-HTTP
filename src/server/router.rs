@@ -93,15 +93,14 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::ops::Deref;
     use std::sync::{Arc, Mutex};
 
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
     use crate::common::status::OK_200;
-    use crate::server::router::ListenerResult::{Next, SendResponse};
-    use crate::server::router::{Router, ListenerResult};
+    use crate::server::router::{ListenerResult, Router};
+    use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 
     type FunctionCalls = Arc<Mutex<Vec<&'static str>>>;
 
@@ -482,5 +481,54 @@ mod tests {
         test_route(&router, "/foo/bar/baz", &calls, Next, vec!["called"]);
         test_route(&router, "/foo/bariugw", &calls, Next, vec!["called"]);
         test_route(&router, "/foofoo", &calls, Next, vec!["called"]);
+    }
+
+    #[test]
+    fn send_response_arc_blocks() {
+        let mut router = Router::new();
+
+        let response = Arc::new(test_response());
+
+        let response_clone = Arc::clone(&response);
+        router.on_prefix("/hello", move |_, _| {
+            SendResponseArc(Arc::clone(&response_clone))
+        });
+
+        router.on_prefix("/hello", move |_, _| {
+            panic!()
+        });
+
+        test_route(&router, "/hello", &function_calls(), SendResponseArc(response), vec![]);
+    }
+
+    #[test]
+    fn listeners_called_until_response_sent() {
+        let mut router = Router::new();
+
+        let calls = function_calls();
+
+        let calls_clone = Arc::clone(&calls);
+        router.on("/hello", move |_, _| {
+            add_function_call(&calls_clone, "call 1");
+            Next
+        });
+
+        let calls_clone = Arc::clone(&calls);
+        router.on("/hello", move |_, _| {
+            add_function_call(&calls_clone, "call 2");
+            Next
+        });
+
+        let calls_clone = Arc::clone(&calls);
+        router.on("/hello", move |_, _| {
+            add_function_call(&calls_clone, "call 3");
+            SendResponse(test_response())
+        });
+
+        router.on("/hello", move |_, _| {
+            panic!()
+        });
+
+        test_route(&router, "/hello", &calls, SendResponse(test_response()), vec!["call 1", "call 2", "call 3"]);
     }
 }

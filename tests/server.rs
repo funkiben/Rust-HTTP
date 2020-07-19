@@ -2,7 +2,7 @@ extern crate my_http;
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::thread::{JoinHandle, sleep, spawn};
+use std::thread::{sleep, spawn};
 use std::time::Duration;
 
 use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMapOps};
