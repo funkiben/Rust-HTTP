@@ -5,26 +5,45 @@ use std::time::Duration;
 
 use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
-use crate::common::parse::{ParsingError, read_message};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200, Status};
+use crate::util::parse::{ParsingError, read_message};
 
 pub struct Client {
     pub config: Config,
     connections: Vec<Mutex<Connection>>,
 }
 
+#[derive(Debug)]
 pub enum RequestError {
     ParsingResponse(ResponseParsingError),
-    Connection(Error),
     Writing(Error),
 }
 
+#[derive(Debug)]
 pub enum ResponseParsingError {
     MissingStatusCode,
     InvalidStatusCode,
     Base(ParsingError),
+}
+
+impl From<ParsingError> for ResponseParsingError {
+    fn from(err: ParsingError) -> Self {
+        ResponseParsingError::Base(err)
+    }
+}
+
+impl From<ResponseParsingError> for RequestError {
+    fn from(err: ResponseParsingError) -> Self {
+        RequestError::ParsingResponse(err)
+    }
+}
+
+impl From<Error> for RequestError {
+    fn from(err: Error) -> Self {
+        RequestError::Writing(err)
+    }
 }
 
 impl Client {
@@ -40,13 +59,11 @@ impl Client {
     }
 
     pub fn send(&self, request: &Request) -> Result<Response, RequestError> {
-        for connection in &self.connections {
-            if let Ok(mut connection) = connection.try_lock() {
-                return connection.send(request);
-            }
-        };
-
-        self.connections.get(0).unwrap().lock().unwrap().send(request)
+        self.connections.iter()
+            .filter_map(|conn| conn.try_lock().ok())
+            .next()
+            .unwrap_or(self.connections.get(0).unwrap().lock().unwrap())
+            .send(request)
     }
 }
 
@@ -64,7 +81,7 @@ impl Connection {
 
     fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
         self.try_write(request)?;
-        read_next_response(self.reader.as_mut().unwrap()).map_err(|err| RequestError::ParsingResponse(err))
+        read_next_response(self.reader.as_mut().unwrap()).map_err(ResponseParsingError::into)
     }
 
     fn try_write(&mut self, request: &Request) -> Result<(), RequestError> {
@@ -73,7 +90,7 @@ impl Connection {
             Ok(())
         } else {
             self.connect()?;
-            write_request(self.writer.as_mut().unwrap(), request).map_err(|err| RequestError::Writing(err))
+            write_request(self.writer.as_mut().unwrap(), request).map_err(Error::into)
         }
     }
 
@@ -85,8 +102,8 @@ impl Connection {
     }
 
     fn connect(&mut self) -> Result<(), RequestError> {
-        let stream = TcpStream::connect(self.addr).map_err(|err| RequestError::Connection(err))?;
-        let stream_clone = stream.try_clone().map_err(|err| RequestError::Connection(err))?;
+        let stream = TcpStream::connect(self.addr)?;
+        let stream_clone = stream.try_clone()?;
         stream.set_read_timeout(Some(self.timeout)).unwrap();
 
         self.reader = Some(BufReader::new(stream));
@@ -96,12 +113,12 @@ impl Connection {
 }
 
 fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, ResponseParsingError> {
-    let (first_line, headers, body) = read_message(reader, false).map_err(|err| ResponseParsingError::Base(err))?;
+    let (first_line, headers, body) = read_message(reader, false)?;
 
     let (http_version, status) = parse_first_line(&first_line)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(ResponseParsingError::Base(ParsingError::WrongHttpVersion));
+        return Err(ParsingError::WrongHttpVersion.into());
     }
 
     Ok(Response { status, headers, body })
@@ -110,13 +127,14 @@ fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, Res
 fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> {
     let mut split = line.split(" ");
 
-    let http_version = split.next().ok_or(ResponseParsingError::Base(ParsingError::MissingHttpVersion))?;
+    let http_version = split.next().ok_or(ParsingError::MissingHttpVersion)?;
     let status_code = split.next().ok_or(ResponseParsingError::MissingStatusCode)?;
 
     Ok((http_version, parse_status(status_code)?))
 }
 
 fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
+    // TODO
     if code.eq("200") {
         Ok(OK_200)
     } else if code.eq("404") {
@@ -139,4 +157,45 @@ fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<(
     writer.write_all(&request.body)?;
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::client::client::{ResponseParsingError, read_next_response};
+    use crate::common::response::Response;
+    use crate::util::mock::MockReader;
+    use std::io::BufReader;
+    use crate::common::status::OK_200;
+    use crate::common::header::{HeaderMap, CONTENT_LENGTH, HeaderMapOps};
+
+    fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
+        let reader = MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect() };
+        let mut reader = BufReader::new(reader);
+        let actual_result = read_next_response(&mut reader);
+        assert_eq!(format!("{:?}", expected_result), format!("{:?}", actual_result));
+    }
+
+    #[test]
+    fn read_request_no_headers_or_body() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\n\r\n"],
+            Ok(Response {
+                status: OK_200,
+                headers: Default::default(),
+                body: vec![]
+            })
+        );
+    }
+
+    #[test]
+    fn read_request_headers_and_body() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                body: "hello".as_bytes().to_vec()
+            })
+        );
+    }
 }

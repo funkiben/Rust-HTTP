@@ -3,6 +3,30 @@ use std::io::{BufRead, BufReader, Error, Read};
 
 use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
 
+#[derive(Debug)]
+pub enum ParsingError {
+    /// Problem parsing a header.
+    BadHeader,
+    /// Message has wrong HTTP version.
+    WrongHttpVersion,
+    /// Missing HTTP version from first line of message.
+    MissingHttpVersion,
+    /// Header has invalid value.
+    InvalidHeaderValue,
+    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request or response.
+    UnexpectedEOF,
+    /// EOF found before any request or response can be read.
+    EOF,
+    /// Error reading from the reader.
+    Reading(Error),
+}
+
+impl From<Error> for ParsingError {
+    fn from(err: Error) -> Self {
+        ParsingError::Reading(err)
+    }
+}
+
 /// Reads the first line, headers, and body of any HTTP request or response.
 /// Returns a tuple of the first line of the request, the headers, and the body of the message.
 pub fn read_message(reader: &mut BufReader<impl Read>, require_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
@@ -27,14 +51,14 @@ pub fn read_message(reader: &mut BufReader<impl Read>, require_content_length: b
 /// Reads a message body from the reader. The body_length is used to determine how much to read.
 fn read_body_exact(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, ParsingError> {
     let mut buf = vec![0; body_length];
-    reader.read_exact(&mut buf).map_err(|e| ParsingError::Reading(e))?;
+    reader.read_exact(&mut buf)?;
     Ok(buf)
 }
 
 /// Reads a message body from the reader. Reads until there's nothing left to read from.
 pub fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
     let mut buf = vec![];
-    reader.read_to_end(&mut buf).map_err(|e| ParsingError::Reading(e))?;
+    reader.read_to_end(&mut buf)?;
     Ok(buf)
 }
 
@@ -42,7 +66,7 @@ pub fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError>
 /// The CRLF is not included in the returned string.
 pub fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, ParsingError> {
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| ParsingError::Reading(e))?;
+    reader.read_line(&mut line)?;
 
     if line.is_empty() {
         return Err(ParsingError::UnexpectedEOF);
@@ -102,22 +126,4 @@ pub fn parse_header_name(raw: &str) -> Header {
         return CONTENT_TYPE;
     }
     Header::Custom(raw.to_lowercase())
-}
-
-#[derive(Debug)]
-pub enum ParsingError {
-    /// Problem parsing a header.
-    BadHeader,
-    /// Message has wrong HTTP version.
-    WrongHttpVersion,
-    /// Missing HTTP version from first line of message.
-    MissingHttpVersion,
-    /// Header has invalid value.
-    InvalidHeaderValue,
-    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request or response.
-    UnexpectedEOF,
-    /// EOF found before any request or response can be read.
-    EOF,
-    /// Error reading from the reader.
-    Reading(Error),
 }

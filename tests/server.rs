@@ -90,7 +90,7 @@ fn test_multiple_concurrent_connections() {
             assert!(String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncustom-header-2: custom header value 2\r\ncontent-length: 7\r\n\r\nwelcome")
                 || String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncontent-length: 7\r\ncustom-header-2: custom header value 2\r\n\r\nwelcome"));
 
-            client.shutdown(Shutdown::Both);
+            client.shutdown(Shutdown::Both).unwrap();
 
         }));
     }

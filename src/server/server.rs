@@ -6,13 +6,13 @@ use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::method::Method::{Delete, Get, Post, Put};
-use crate::common::parse::{ParsingError, read_message};
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::common::thread_pool::ThreadPool;
 use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
+use crate::util::parse::{ParsingError, read_message};
+use crate::util::thread_pool::ThreadPool;
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
@@ -28,6 +28,12 @@ enum RequestParsingError {
     UnrecognizedMethod(String),
     /// Base parsing error.
     Base(ParsingError),
+}
+
+impl From<ParsingError> for RequestParsingError {
+    fn from(err: ParsingError) -> Self {
+        RequestParsingError::Base(err)
+    }
 }
 
 /// An HTTP server.
@@ -130,12 +136,12 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
 fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
-    let (first_line, headers, body) = read_message(reader, true).map_err(|err| RequestParsingError::Base(err))?;
+    let (first_line, headers, body) = read_message(reader, true)?;
 
     let (method, uri, http_version) = parse_first_line(&first_line)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(RequestParsingError::Base(ParsingError::WrongHttpVersion));
+        return Err(ParsingError::WrongHttpVersion.into());
     }
 
     Ok(Request { method, uri: uri.to_string(), headers, body })
@@ -150,7 +156,7 @@ fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingEr
 
     let method_raw = split.next().ok_or(RequestParsingError::MissingMethod)?;
     let uri = split.next().ok_or(RequestParsingError::MissingURI)?;
-    let http_version = split.next().ok_or(RequestParsingError::Base(ParsingError::MissingHttpVersion))?;
+    let http_version = split.next().ok_or(ParsingError::MissingHttpVersion)?;
 
     Ok((parse_method(method_raw)?, uri, http_version))
 }
@@ -187,9 +193,7 @@ fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Resu
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::min;
     use std::collections::HashMap;
-    use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -200,47 +204,7 @@ mod tests {
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
-
-    struct MockReader {
-        data: Vec<Vec<u8>>
-    }
-
-    impl Read for MockReader {
-        fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.data.is_empty() {
-                return Ok(0);
-            }
-
-            let next = self.data.first_mut().unwrap();
-
-            let amount = min(buf.len(), next.len());
-            let to_read: Vec<u8> = next.drain(0..amount).collect();
-            buf.write(&to_read).unwrap();
-
-            if next.is_empty() {
-                self.data.remove(0);
-            }
-
-            Ok(amount)
-        }
-    }
-
-    struct MockWriter {
-        data: Vec<Vec<u8>>,
-        flushed: Vec<Vec<u8>>,
-    }
-
-    impl Write for MockWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.data.push(Vec::from(buf));
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.flushed.append(&mut self.data);
-            Ok(())
-        }
-    }
+    use crate::util::mock::{MockReader, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader {
