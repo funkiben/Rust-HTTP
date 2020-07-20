@@ -1,3 +1,5 @@
+pub const HTTP_VERSION: &str = "HTTP/1.1";
+
 /// HTTP header data types and functions.
 pub mod header;
 /// HTTP method data type and functions.
@@ -8,5 +10,9 @@ pub mod request;
 pub mod response;
 /// HTTP status data type and functions.
 pub mod status;
+
 /// Basic thread pool utility.
-pub mod thread_pool;
+pub(crate) mod thread_pool;
+
+/// Basic HTTP message parsing functions shared by the server and client.
+pub(crate) mod parse;

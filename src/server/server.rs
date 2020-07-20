@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
-use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
-use crate::common::header::Header::Custom;
+use crate::common::header::{CONNECTION, HeaderMapOps};
+use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::method::Method::{Delete, Get, Post, Put};
+use crate::common::parse::{ParsingError, read_message};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::thread_pool::ThreadPool;
@@ -14,10 +14,21 @@ use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 
-const HTTP_VERSION: &str = "HTTP/1.1";
-
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
+
+/// The possible errors that can be encountered when trying to parse a request.
+#[derive(Debug)]
+enum RequestParsingError {
+    /// Missing method from first line of request.
+    MissingMethod,
+    /// Missing URI from first line of request.
+    MissingURI,
+    /// Method is unrecognized.
+    UnrecognizedMethod(String),
+    /// Base parsing error.
+    Base(ParsingError),
+}
 
 /// An HTTP server.
 pub struct Server {
@@ -110,7 +121,7 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 
         match request {
             Ok(request) => if on_request(request) { return Ok(()); },
-            Err(RequestParsingError::EOF) => return Ok(()),
+            Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
             err => return err.map(|_| {})
         }
     }
@@ -119,110 +130,29 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
 fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
-    let first_line = read_line(reader).map_err(|err|
-        if let RequestParsingError::UnexpectedEOF = err { RequestParsingError::EOF } else { err }
-    )?;
+    let (first_line, headers, body) = read_message(reader, true).map_err(|err| RequestParsingError::Base(err))?;
 
-    let (method, uri, http_version) = parse_first_line(first_line)?;
-    let headers = parse_headers(read_lines_until_empty_line(reader)?)?;
-
-    let body = if let Some(value) = headers.get_first_header_value(&CONTENT_LENGTH) {
-        let body_length = value.parse().or(Err(RequestParsingError::InvalidHeaderValue))?;
-        read_body(reader, body_length)?
-    } else {
-        Vec::new()
-    };
+    let (method, uri, http_version) = parse_first_line(&first_line)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(RequestParsingError::WrongHttpVersion);
+        return Err(RequestParsingError::Base(ParsingError::WrongHttpVersion));
     }
 
-    Ok(Request { method, uri, headers, body })
+    Ok(Request { method, uri: uri.to_string(), headers, body })
 }
 
-/// Reads a request body from the reader. The body_length is used to determine how much to read.
-fn read_body(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, RequestParsingError> {
-    let mut buf = vec![0; body_length];
-    reader.read_exact(&mut buf).or_else(|e| Err(RequestParsingError::Reading(e)))?;
-    Ok(buf)
-}
-
-/// Reads a single line, assuming the line ends in a CRLF ("\r\n").
-/// The CRLF is not included in the returned string.
-fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, RequestParsingError> {
-    let mut line = String::new();
-    reader.read_line(&mut line).or_else(|e| Err(RequestParsingError::Reading(e)))?;
-
-    if line.is_empty() {
-        return Err(RequestParsingError::UnexpectedEOF);
-    }
-
-    // pop the \r\n off the end of the line
-    line.pop();
-    line.pop();
-
-    Ok(line)
-}
-
-/// Reads lines from the buffered reader. The returned lines do not include a CRLF.
-fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<String>, RequestParsingError> {
-    let mut lines = Vec::new();
-
-    loop {
-        let line = read_line(reader)?;
-
-        if line.is_empty() {
-            return Ok(lines);
-        }
-
-        lines.push(line);
-    }
-}
-
-/// Tries to parse the given lines as headers.
-/// Each line is parsed with the format "V: K" where V is the header name and K is the header value.
-fn parse_headers(lines: Vec<String>) -> Result<HeaderMap, RequestParsingError> {
-    let mut headers = HashMap::new();
-    for line in lines {
-        let (header, value) = parse_header(line)?;
-        headers.add_header(header, value);
-    }
-    Ok(headers)
-}
-
-/// Parses the given line as a header. Splits the line at the first ": " pattern.
-fn parse_header(raw: String) -> Result<(Header, String), RequestParsingError> {
-    let mut split = raw.splitn(2, ": ");
-
-    let header_raw = split.next().ok_or(RequestParsingError::ParsingHeader)?;
-    let value = split.next().ok_or(RequestParsingError::ParsingHeader)?;
-
-    Ok((parse_header_name(header_raw), String::from(value)))
-}
-
-/// Parses the given header name. Will try to use a predefined header constant if possible to save memory.
-/// Otherwise, will return a Custom header.
-fn parse_header_name(raw: &str) -> Header {
-    if "connection".eq_ignore_ascii_case(raw) {
-        return CONNECTION;
-    } else if "content-length".eq_ignore_ascii_case(raw) {
-        return CONTENT_LENGTH;
-    } else if "content-type".eq_ignore_ascii_case(raw) {
-        return CONTENT_TYPE;
-    }
-    Custom(raw.to_lowercase())
-}
 
 /// Parses the given line as the first line of a request.
 /// The first lines of requests have the form: "Method Request-URI HTTP-Version CRLF"
-fn parse_first_line(line: String) -> Result<(Method, String, String), RequestParsingError> {
+/// // TODO use string slice?
+fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingError> {
     let mut split = line.split(" ");
 
     let method_raw = split.next().ok_or(RequestParsingError::MissingMethod)?;
     let uri = split.next().ok_or(RequestParsingError::MissingURI)?;
-    let http_version = split.next().ok_or(RequestParsingError::MissingHttpVersion)?;
+    let http_version = split.next().ok_or(RequestParsingError::Base(ParsingError::MissingHttpVersion))?;
 
-    Ok((parse_method(method_raw)?, String::from(uri), String::from(http_version)))
+    Ok((parse_method(method_raw)?, uri, http_version))
 }
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
@@ -253,31 +183,6 @@ fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Resu
     writer.write_all(&response.body)?;
     writer.flush()?;
     Ok(())
-}
-
-/// The possible errors that can be encountered when trying to parse a request.
-#[derive(Debug)]
-enum RequestParsingError {
-    /// Error reading from the reader.
-    Reading(std::io::Error),
-    /// Missing method from first line of request.
-    MissingMethod,
-    /// Missing URI from first line of request.
-    MissingURI,
-    /// Missing HTTP version from first line of request.
-    MissingHttpVersion,
-    /// Request has wrong HTTP version.
-    WrongHttpVersion,
-    /// Problem parsing a request header.
-    ParsingHeader,
-    /// Method is unrecognized.
-    UnrecognizedMethod(String),
-    /// Header has invalid value.
-    InvalidHeaderValue,
-    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request.
-    UnexpectedEOF,
-    /// EOF found before any request can be read.
-    EOF,
 }
 
 #[cfg(test)]

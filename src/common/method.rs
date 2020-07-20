@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 /// An HTTP method.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Method {
@@ -9,4 +11,10 @@ pub enum Method {
     Delete,
     /// PUT method
     Put,
+}
+
+impl Display for Method {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
