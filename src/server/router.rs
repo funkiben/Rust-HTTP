@@ -69,8 +69,8 @@ impl Router {
     fn result_internal(&self, request_uri: &str, request: &Request) -> ListenerResult {
         self.listeners.iter()
             .filter(|(uri, _)| request_uri.starts_with(uri))
-            .map(|(_,listener)| listener(request_uri, request))
-            .find(|result| *result != Next )
+            .map(|(_, listener)| listener(request_uri, request))
+            .find(|result| *result != Next)
             .unwrap_or(Next)
     }
 

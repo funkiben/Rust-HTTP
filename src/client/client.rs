@@ -8,23 +8,35 @@ use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200, Status};
-use crate::util::parse::{ParsingError, read_message};
+pub use crate::util::parse::ParsingError;
+use crate::util::parse::read_message;
 
+/// Client for making HTTP requests.
 pub struct Client {
+    /// The config the client uses.
     pub config: Config,
+    /// The connections to the server.
     connections: Vec<Mutex<Connection>>,
 }
 
+/// Error when making an HTTP request.
 #[derive(Debug)]
 pub enum RequestError {
+    /// Error with parsing the response received from the server.
     ParsingResponse(ResponseParsingError),
-    Writing(Error),
+    /// Error sending the request to the server.
+    Sending(Error),
 }
 
+
+/// Error when parsing an HTTP response from a server.
 #[derive(Debug)]
 pub enum ResponseParsingError {
+    /// Response was missing status code.
     MissingStatusCode,
+    /// Response had an unknown status code.
     InvalidStatusCode,
+    /// Base parsing error.
     Base(ParsingError),
 }
 
@@ -42,48 +54,65 @@ impl From<ResponseParsingError> for RequestError {
 
 impl From<Error> for RequestError {
     fn from(err: Error) -> Self {
-        RequestError::Writing(err)
+        RequestError::Sending(err)
     }
 }
 
 impl Client {
+    /// Creates a new client with the given config. Will not actually connect to the server until a request is sent.
     pub fn new(config: Config) -> Client {
-        assert!(config.max_connections > 0);
+        assert!(config.num_connections > 0, "Number of connections must be positive");
 
-        let mut connections = Vec::with_capacity(config.max_connections);
-        for _ in 0..config.max_connections {
+        let mut connections = Vec::with_capacity(config.num_connections);
+        for _ in 0..config.num_connections {
             connections.push(Mutex::new(Connection::new(config.addr, config.read_timeout)))
         }
 
         Client { connections, config }
     }
 
+    /// Finds an unused connection to the server and makes a request. The connection will be locked until this method returns.
+    /// If all connections are in use then this method will block until a connection is free.
+    /// Returns the returned response from the server or an error.
     pub fn send(&self, request: &Request) -> Result<Response, RequestError> {
-        self.connections.iter()
-            .filter_map(|conn| conn.try_lock().ok())
-            .next()
-            .unwrap_or(self.connections.get(0).unwrap().lock().unwrap())
-            .send(request)
+        loop {
+            let mut free = self.connections.iter().filter_map(|conn| conn.try_lock().ok());
+            if let Some(mut conn) = free.next() {
+                return conn.send(request);
+            }
+        }
     }
 }
 
+/// Connection to a server.
 struct Connection {
+    /// Address of the server.
     addr: &'static str,
-    timeout: Duration,
+    /// Read timeout for the connection.
+    read_timeout: Duration,
+    /// Reader for reading from the TCP stream.
     reader: Option<BufReader<TcpStream>>,
+    /// Writer for writing to the TCP stream.
     writer: Option<BufWriter<TcpStream>>,
 }
 
 impl Connection {
+    /// Creates a new connection. Does not actually open a connection to the server until the "send" method is called.
     fn new(addr: &'static str, timeout: Duration) -> Connection {
-        Connection { addr, timeout, reader: None, writer: None }
+        Connection { addr, read_timeout: timeout, reader: None, writer: None }
     }
 
+    /// Sends a request to the server and returns the response.
+    /// If the connection is not yet open, then a new connection will be opened.
+    /// If the request cannot be written, then a new connection is opened and the request is retried once more.
     fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
         self.try_write(request)?;
         read_next_response(self.reader.as_mut().unwrap()).map_err(ResponseParsingError::into)
     }
 
+    /// Tries to write the request to the server.
+    /// If an existing connection is open, then that connection will be written to, otherwise a new connection is opened.
+    /// If the existing connection cannot be written to, then a new connection is opened.
     fn try_write(&mut self, request: &Request) -> Result<(), RequestError> {
         self.ensure_connected()?;
         if let Ok(_) = write_request(self.writer.as_mut().unwrap(), request) {
@@ -94,6 +123,7 @@ impl Connection {
         }
     }
 
+    /// Connects to the server if not already connected.
     fn ensure_connected(&mut self) -> Result<(), RequestError> {
         if let None = self.reader {
             self.connect()?
@@ -101,10 +131,11 @@ impl Connection {
         Ok(())
     }
 
+    /// Opens a new connection to the server.
     fn connect(&mut self) -> Result<(), RequestError> {
         let stream = TcpStream::connect(self.addr)?;
         let stream_clone = stream.try_clone()?;
-        stream.set_read_timeout(Some(self.timeout)).unwrap();
+        stream.set_read_timeout(Some(self.read_timeout)).unwrap();
 
         self.reader = Some(BufReader::new(stream));
         self.writer = Some(BufWriter::new(stream_clone));
@@ -112,6 +143,7 @@ impl Connection {
     }
 }
 
+/// Reads a response from the reader.
 fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, ResponseParsingError> {
     let (first_line, headers, body) = read_message(reader, false)?;
 
@@ -124,6 +156,7 @@ fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, Res
     Ok(Response { status, headers, body })
 }
 
+/// Parses the first line of a response.
 fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> {
     let mut split = line.split(" ");
 
@@ -133,6 +166,7 @@ fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> 
     Ok((http_version, parse_status(status_code)?))
 }
 
+/// Parses the status code.
 fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
     // TODO
     if code.eq("200") {
@@ -146,6 +180,7 @@ fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
     }
 }
 
+/// Writes the given request to the given writer.
 fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<()> {
     write!(writer, "{} {} {}\r\n", request.method, request.uri, HTTP_VERSION)?;
     for (header, values) in request.headers.iter() {
@@ -161,12 +196,17 @@ fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<(
 
 #[cfg(test)]
 mod tests {
-    use crate::client::client::{ResponseParsingError, read_next_response};
-    use crate::common::response::Response;
-    use crate::util::mock::MockReader;
     use std::io::BufReader;
-    use crate::common::status::OK_200;
-    use crate::common::header::{HeaderMap, CONTENT_LENGTH, HeaderMapOps};
+    use std::time::Duration;
+
+    use crate::client::{Client, Config};
+    use crate::client::client::{read_next_response, ResponseParsingError};
+    use crate::client::ResponseParsingError::{InvalidStatusCode, MissingStatusCode};
+    use crate::common::header::{CONTENT_LENGTH, Header, HeaderMapOps};
+    use crate::common::response::Response;
+    use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200};
+    use crate::util::mock::MockReader;
+    use crate::util::parse::ParsingError::{BadHeader, EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect() };
@@ -182,8 +222,8 @@ mod tests {
             Ok(Response {
                 status: OK_200,
                 headers: Default::default(),
-                body: vec![]
-            })
+                body: vec![],
+            }),
         );
     }
 
@@ -194,8 +234,218 @@ mod tests {
             Ok(Response {
                 status: OK_200,
                 headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
-                body: "hello".as_bytes().to_vec()
-            })
+                body: "hello".as_bytes().to_vec(),
+            }),
         );
+    }
+
+    #[test]
+    fn read_request_headers_and_body_fragmented() {
+        test_read_next_response(
+            vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                body: "hello".as_bytes().to_vec(),
+            }),
+        );
+    }
+
+    #[test]
+    fn read_only_one_request() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                body: "hello".as_bytes().to_vec(),
+            }),
+        );
+    }
+
+    #[test]
+    fn read_request_long_body() {
+        let body = b"iuwrhgiuelrguihwleriughwleiruhglweiurhgliwerg fkwfowjeofjiwoefijwef \
+        wergiuwehrgiuwehilrguwehlrgiuw fewfwferg wenrjg; weirng lwieurhg owieurhg oeiuwrhg oewirg er\
+        gweuirghweiurhgleiwurhglwieurhglweiurhglewiurhto8w374yto8374yt9p18234u50982@#$%#$%^&%^*(^)&(\
+        *)_)+__+*()*()&**^%&$##!~!@~``12]\n3'\']\\l[.'\"lk]/l;<:?<:}|?L:|?L|?|:?e       oivj        \
+        \n\n\n\n\\\t\t\t\t\t\t\t\\\t\t\t\t                                                          \
+        ioerjgfoiaejrogiaergq34t2345123`    oijrgoi wjergi jweorgi jweorgji                 eworigj \
+        riogj ewoirgj oewirjg 934598ut6932458t\ruyo3485gh o4w589ghu w458                          9ghu\
+        pw94358gh pw93458gh pw9345gh pw9438g\rhu pw3945hg pw43958gh pw495gh :::;wefwefwef wef we  e ;;\
+        @#$%@#$^@#$%&#$@%^#$%@#$%@$^%$&$%^*^%&(^$%&*#%^$&@$%^#!#$!~```~~~```wefwef wef ee f efefe e{\
+        @#$%@#$^@#$%&#$@%^#$%@#$%@$^%$&$%^*^%&(^$%&*#%^$&@$%^#!#$!~```~~~```wefwef wef ee f efefe e{\
+        @#$%@#$^@#$%&#$@%^#$%@#$%@$^%$&$%^*^%&(^$%&*#%^$&@$%^#!#$!~```~~~```wefwef wef ee f efefe e{\
+        P{P[p[p[][][][]{}{}][][%%%\n\n\n\n\n\n wefwfw e2123456768960798676reresdsxfbcgrtg eg erg   ";
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "1054".to_string())]),
+                body: body.to_vec(),
+            }),
+        );
+    }
+
+    #[test]
+    fn read_no_content_length() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
+            Ok(Response {
+                status: OK_200,
+                headers: Default::default(),
+                body: "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec(),
+            }),
+        );
+    }
+
+    #[test]
+    fn read_custom_header() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
+                body: vec![],
+            }),
+        );
+    }
+
+    #[test]
+    fn read_404_response() {
+        test_read_next_response(
+            vec!["HTTP/1.1 404 Not Found\r\n\r\n"],
+            Ok(Response {
+                status: NOT_FOUND_404,
+                headers: Default::default(),
+                body: vec![],
+            }),
+        );
+    }
+
+    #[test]
+    fn no_status_reason() {
+        test_read_next_response(
+            vec!["HTTP/1.1 400\r\n\r\n"],
+            Ok(Response {
+                status: BAD_REQUEST_400,
+                headers: Default::default(),
+                body: vec![],
+            }),
+        );
+    }
+
+    #[test]
+    fn read_gibberish_response() {
+        test_read_next_response(
+            vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn read_gibberish_response_with_newline() {
+        test_read_next_response(
+            vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn read_gibberish_with_crlf() {
+        test_read_next_response(
+            vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
+            Err(BadHeader.into()),
+        );
+    }
+
+    #[test]
+    fn read_gibberish_with_crlfs_at_end() {
+        test_read_next_response(
+            vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
+            Err(InvalidStatusCode),
+        );
+    }
+
+    #[test]
+    fn read_all_newlines() {
+        test_read_next_response(
+            vec!["\n\n\n\n\n\n\n\n\n\n\n"],
+            Err(MissingStatusCode),
+        );
+    }
+
+    #[test]
+    fn read_all_crlfs() {
+        test_read_next_response(
+            vec!["\r\n\r\n\r\n\r\n"],
+            Err(MissingStatusCode),
+        );
+    }
+
+    #[test]
+    fn wrong_http_version() {
+        test_read_next_response(
+            vec!["HTTP/2.0 404 Not Found\r\n\r\n"],
+            Err(WrongHttpVersion.into()),
+        );
+    }
+
+    #[test]
+    fn no_status_code() {
+        test_read_next_response(
+            vec!["HTTP/1.1\r\n\r\n"],
+            Err(MissingStatusCode),
+        );
+    }
+
+    #[test]
+    fn missing_crlfs() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn only_one_crlf() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn bad_header() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
+            Err(BadHeader.into()),
+        );
+    }
+
+    #[test]
+    fn bad_content_length_value() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
+            Err(InvalidHeaderValue.into()),
+        );
+    }
+
+    #[test]
+    fn no_data() {
+        test_read_next_response(
+            vec![],
+            Err(EOF.into()),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn zero_connections() {
+        Client::new(Config {
+            addr: "localhost:7878",
+            read_timeout: Duration::from_millis(10),
+            num_connections: 0,
+        });
     }
 }

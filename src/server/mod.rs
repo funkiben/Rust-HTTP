@@ -1,7 +1,5 @@
-/// Config for HTTP servers.
-pub use config::Config;
-/// HTTP server.
-pub use server::Server;
+pub use config::*;
+pub use server::*;
 
 mod server;
 mod config;

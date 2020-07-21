@@ -118,6 +118,7 @@ pub fn parse_header(raw: String) -> Result<(Header, String), ParsingError> {
 /// Parses the given header name. Will try to use a predefined header constant if possible to save memory.
 /// Otherwise, will return a Custom header.
 pub fn parse_header_name(raw: &str) -> Header {
+    // TODO
     if "connection".eq_ignore_ascii_case(raw) {
         return CONNECTION;
     } else if "content-length".eq_ignore_ascii_case(raw) {

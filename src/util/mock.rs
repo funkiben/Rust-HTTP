@@ -1,5 +1,5 @@
-use std::io::{Write, Read};
 use std::cmp::min;
+use std::io::{Read, Write};
 
 pub struct MockReader {
     pub data: Vec<Vec<u8>>
