@@ -6,13 +6,10 @@ use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, He
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
 pub enum ParsingError {
-    // TODO compound some of these into just a "BadSyntax" error?
-    /// Problem parsing a header.
-    BadHeader,
+    /// Invalid syntax in the message.
+    BadSyntax,
     /// Message has wrong HTTP version.
     WrongHttpVersion,
-    /// Missing HTTP version from first line of message.
-    MissingHttpVersion,
     /// Header has invalid value.
     InvalidHeaderValue,
     /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request or response.
@@ -84,7 +81,6 @@ fn read_chunked_body(reader: &mut BufReader<impl Read>) -> Result<Vec<u8>, Parsi
     let mut body = vec![];
     loop {
         let line = read_line(reader)?;
-        // TODO change error
         let size = usize::from_str_radix(&line, 16).map_err(|_| ParsingError::InvalidHeaderValue)?;
 
         if size == 0 {
@@ -159,8 +155,8 @@ pub fn parse_headers(lines: Vec<String>) -> Result<HeaderMap, ParsingError> {
 pub fn parse_header(raw: String) -> Result<(Header, String), ParsingError> {
     let mut split = raw.splitn(2, ": ");
 
-    let header_raw = split.next().ok_or(ParsingError::BadHeader)?;
-    let value = split.next().ok_or(ParsingError::BadHeader)?;
+    let header_raw = split.next().ok_or(ParsingError::BadSyntax)?;
+    let value = split.next().ok_or(ParsingError::BadSyntax)?;
 
     Ok((parse_header_name(header_raw), String::from(value)))
 }

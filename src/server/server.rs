@@ -20,10 +20,6 @@ const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 /// The possible errors that can be encountered when trying to parse a request.
 #[derive(Debug)]
 enum RequestParsingError {
-    /// Missing method from first line of request.
-    MissingMethod,
-    /// Missing URI from first line of request.
-    MissingURI,
     /// Method is unrecognized.
     UnrecognizedMethod(String),
     /// Base parsing error.
@@ -150,13 +146,12 @@ fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestPar
 
 /// Parses the given line as the first line of a request.
 /// The first lines of requests have the form: "Method Request-URI HTTP-Version CRLF"
-/// // TODO use string slice?
 fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingError> {
     let mut split = line.split(" ");
 
-    let method_raw = split.next().ok_or(RequestParsingError::MissingMethod)?;
-    let uri = split.next().ok_or(RequestParsingError::MissingURI)?;
-    let http_version = split.next().ok_or(ParsingError::MissingHttpVersion)?;
+    let method_raw = split.next().ok_or(ParsingError::BadSyntax)?;
+    let uri = split.next().ok_or(ParsingError::BadSyntax)?;
+    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
 
     Ok((parse_method(method_raw)?, uri, http_version))
 }

@@ -32,8 +32,6 @@ pub enum RequestError {
 /// Error when parsing an HTTP response from a server.
 #[derive(Debug)]
 pub enum ResponseParsingError {
-    /// Response was missing status code.
-    MissingStatusCode,
     /// Response had an unknown status code.
     InvalidStatusCode,
     /// Base parsing error.
@@ -160,8 +158,8 @@ fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, Res
 fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> {
     let mut split = line.split(" ");
 
-    let http_version = split.next().ok_or(ParsingError::MissingHttpVersion)?;
-    let status_code = split.next().ok_or(ResponseParsingError::MissingStatusCode)?;
+    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
+    let status_code = split.next().ok_or(ParsingError::BadSyntax)?;
 
     Ok((http_version, parse_status(status_code)?))
 }
@@ -201,12 +199,12 @@ mod tests {
 
     use crate::client::{Client, Config};
     use crate::client::client::{read_next_response, ResponseParsingError};
-    use crate::client::ResponseParsingError::{InvalidStatusCode, MissingStatusCode};
+    use crate::client::ResponseParsingError::{InvalidStatusCode};
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200};
     use crate::util::mock::MockReader;
-    use crate::util::parse::ParsingError::{BadHeader, EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion, Reading};
+    use crate::util::parse::ParsingError::{EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion, Reading, BadSyntax};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::from(data);
@@ -355,7 +353,7 @@ mod tests {
     fn read_gibberish_with_crlf() {
         test_read_next_response(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
-            Err(BadHeader.into()),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -371,7 +369,7 @@ mod tests {
     fn read_all_newlines() {
         test_read_next_response(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
-            Err(MissingStatusCode),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -379,7 +377,7 @@ mod tests {
     fn read_all_crlfs() {
         test_read_next_response(
             vec!["\r\n\r\n\r\n\r\n"],
-            Err(MissingStatusCode),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -395,7 +393,7 @@ mod tests {
     fn no_status_code() {
         test_read_next_response(
             vec!["HTTP/1.1\r\n\r\n"],
-            Err(MissingStatusCode),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -419,7 +417,7 @@ mod tests {
     fn bad_header() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
-            Err(BadHeader.into()),
+            Err(BadSyntax.into()),
         );
     }
 
