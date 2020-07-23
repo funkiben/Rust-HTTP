@@ -5,6 +5,12 @@ pub struct MockReader {
     pub data: Vec<Vec<u8>>
 }
 
+impl MockReader {
+    pub fn from(data: Vec<&str>) -> MockReader {
+        MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect() }
+    }
+}
+
 impl Read for MockReader {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
         if self.data.is_empty() {
@@ -28,6 +34,12 @@ impl Read for MockReader {
 pub struct MockWriter {
     pub data: Vec<Vec<u8>>,
     pub flushed: Vec<Vec<u8>>,
+}
+
+impl MockWriter {
+    pub fn new() -> MockWriter {
+        MockWriter { data: vec![], flushed: vec![] }
+    }
 }
 
 impl Write for MockWriter {

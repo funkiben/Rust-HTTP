@@ -196,7 +196,7 @@ fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufReader;
+    use std::io::{BufReader, Error, ErrorKind};
     use std::time::Duration;
 
     use crate::client::{Client, Config};
@@ -206,10 +206,10 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200};
     use crate::util::mock::MockReader;
-    use crate::util::parse::ParsingError::{BadHeader, EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion};
+    use crate::util::parse::ParsingError::{BadHeader, EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion, Reading};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
-        let reader = MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect() };
+        let reader = MockReader::from(data);
         let mut reader = BufReader::new(reader);
         let actual_result = read_next_response(&mut reader);
         assert_eq!(format!("{:?}", expected_result), format!("{:?}", actual_result));
@@ -436,6 +436,54 @@ mod tests {
         test_read_next_response(
             vec![],
             Err(EOF.into()),
+        );
+    }
+
+    #[test]
+    fn one_character() {
+        test_read_next_response(
+            vec!["a"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn one_crlf_nothing_else() {
+        test_read_next_response(
+            vec!["\r\n"],
+            Err(UnexpectedEOF.into()),
+        );
+    }
+
+    #[test]
+    fn content_length_too_long() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")).into()),
+        );
+    }
+
+    #[test]
+    fn content_length_too_long_with_request_after() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "7".to_string())]),
+                body: "helloHT".as_bytes().to_vec(),
+            }),
+        );
+    }
+
+    #[test]
+    fn content_length_too_short() {
+        test_read_next_response(
+            vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
+            Ok(Response {
+                status: OK_200,
+                headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "3".to_string())]),
+                body: "hel".as_bytes().to_vec(),
+            }),
         );
     }
 

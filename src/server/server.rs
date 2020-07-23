@@ -212,7 +212,7 @@ mod tests {
             data: input.into_iter().map(String::from).map(String::into_bytes).collect()
         };
 
-        let mut writer = MockWriter { data: vec![], flushed: vec![] };
+        let mut writer = MockWriter::new();
 
         let mut router = Router::new();
 
@@ -699,7 +699,7 @@ mod tests {
             body: Vec::from("the body".as_bytes()),
         };
 
-        let mut writer = MockWriter { data: vec![], flushed: vec![] };
+        let mut writer = MockWriter::new();
 
         write_response(&mut writer, &response).unwrap();
 

@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Error, Read};
 
 use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
 
+/// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
 pub enum ParsingError {
     /// Problem parsing a header.
