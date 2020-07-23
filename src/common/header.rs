@@ -9,6 +9,8 @@ pub const CONNECTION: Header = Normal("connection");
 pub const CONTENT_LENGTH: Header = Normal("content-length");
 /// Content-Type header.
 pub const CONTENT_TYPE: Header = Normal("content-type");
+/// Transfer-Encoding header.
+pub const TRANSFER_ENCODING: Header = Normal("transfer-encoding");
 
 /// A header. Is either a predefined "Normal" header with a static string, or a "Custom" header with a uniquely allocated String.
 /// The "Normal" variant is to reuse memory for frequently seen headers.

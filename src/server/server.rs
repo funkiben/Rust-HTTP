@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
-use crate::common::method::Method::{Delete, Get, Post, Put};
+use crate::common::method::Method::{DELETE, GET, POST, PUT};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::server::config::Config;
@@ -136,7 +136,7 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
 fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
-    let (first_line, headers, body) = read_message(reader, true)?;
+    let (first_line, headers, body) = read_message(reader, false)?;
 
     let (method, uri, http_version) = parse_first_line(&first_line)?;
 
@@ -165,13 +165,13 @@ fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingEr
 fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
     // TODO
     if raw.eq("GET") {
-        Ok(Get)
+        Ok(GET)
     } else if raw.eq("POST") {
-        Ok(Post)
+        Ok(POST)
     } else if raw.eq("DELETE") {
-        Ok(Delete)
+        Ok(DELETE)
     } else if raw.eq("PUT") {
-        Ok(Put)
+        Ok(PUT)
     } else {
         Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
     }
@@ -267,7 +267,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
             }])
@@ -279,7 +279,7 @@ mod tests {
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
             }])
@@ -291,7 +291,7 @@ mod tests {
             vec!["GET /hello/world/ HTTP/1.1\r\n\r\n"],
             vec![Request {
                 uri: String::from("/hello/world/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
             }])
@@ -303,7 +303,7 @@ mod tests {
             vec!["GET !#%$#/-+=_$+[]{}\\%&$ HTTP/1.1\r\n\r\n"],
             vec![Request {
                 uri: String::from("!#%$#/-+=_$+[]{}\\%&$"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
             }])
@@ -315,7 +315,7 @@ mod tests {
             vec!["GET /hello/world/ HTTP/1.1 hello there blah blah\r\n\r\n"],
             vec![Request {
                 uri: String::from("/hello/world/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
             }])
@@ -328,13 +328,13 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMap::new(),
                     body: vec![],
                 },
                 Request {
                     uri: String::from("/"),
-                    method: Method::Post,
+                    method: Method::POST,
                     headers: HeaderMap::new(),
                     body: vec![],
                 }
@@ -347,7 +347,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\nconnection: close\r\nsomething: hello there goodbye\r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONNECTION, String::from("close")),
@@ -363,7 +363,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONTENT_LENGTH, String::from("0")),
@@ -380,7 +380,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONNECTION, String::from("close")),
@@ -396,7 +396,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (Header::Custom(String::from("")), String::from("")),
                     (Header::Custom(String::from("")), String::from("")),
@@ -412,7 +412,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
@@ -427,7 +427,7 @@ mod tests {
             vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
@@ -447,7 +447,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/body1"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![
                         (CONTENT_LENGTH, String::from("5")),
                     ]),
@@ -455,7 +455,7 @@ mod tests {
                 },
                 Request {
                     uri: String::from("/body2"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![
                         (CONTENT_LENGTH, String::from("7")),
                     ]),
@@ -485,7 +485,7 @@ mod tests {
             vec!["GET / HTTP/1.1\r\ncontent-length: 1131\r\n\r\n", &String::from_utf8_lossy(body)],
             vec![Request {
                 uri: String::from("/"),
-                method: Method::Get,
+                method: Method::GET,
                 headers: HeaderMapOps::from(vec![
                     (CONTENT_LENGTH, String::from("1131")),
                 ]),
@@ -500,7 +500,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![(CONNECTION, String::from("close"))]),
                     body: vec![],
                 }
@@ -515,7 +515,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![
                         (Header::Custom(String::from("hello")), String::from("value: foo"))
                     ]),
@@ -635,7 +635,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMap::new(),
                     body: vec![],
                 }
@@ -650,7 +650,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("3"))]),
                     body: b"hel".to_vec(),
                 }
@@ -681,7 +681,7 @@ mod tests {
             vec![
                 Request {
                     uri: String::from("/"),
-                    method: Method::Get,
+                    method: Method::GET,
                     headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),
                     body: vec![],
                 }],

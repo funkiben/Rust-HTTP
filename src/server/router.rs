@@ -119,7 +119,7 @@ mod tests {
     fn test_request(uri: &'static str) -> Request {
         Request {
             uri: String::from(uri),
-            method: Method::Get,
+            method: Method::GET,
             headers: HashMap::new(),
             body: vec![],
         }

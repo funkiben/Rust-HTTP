@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Error, Read};
 
-use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
+use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
 pub enum ParsingError {
+    // TODO compound some of these into just a "BadSyntax" error?
     /// Problem parsing a header.
     BadHeader,
     /// Message has wrong HTTP version.
@@ -29,31 +30,79 @@ impl From<Error> for ParsingError {
 }
 
 /// Reads the first line, headers, and body of any HTTP request or response.
+/// If a content length cannot be determined and read_if_no_content_length is true, then the
+/// remainder of data in the reader will be put in the body (meaning this function will block until
+/// the reader signals EOF). If it's false then no more data will be read after the headers, and the
+/// body will be empty.
 /// Returns a tuple of the first line of the request, the headers, and the body of the message.
-pub fn read_message(reader: &mut BufReader<impl Read>, require_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
+pub fn read_message(reader: &mut BufReader<impl Read>, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
     let first_line = read_line(reader).map_err(|err|
         if let ParsingError::UnexpectedEOF = err { ParsingError::EOF } else { err }
     )?;
 
     let headers = parse_headers(read_lines_until_empty_line(reader)?)?;
 
-    let body = if let Some(value) = headers.get_first_header_value(&CONTENT_LENGTH) {
-        let body_length = value.parse().or(Err(ParsingError::InvalidHeaderValue))?;
-        read_body_exact(reader, body_length)?
-    } else if !require_content_length {
-        read_body_to_end(reader)?
-    } else {
-        Vec::new()
-    };
+    let body = read_body(reader, &headers, read_if_no_content_length)?;
 
     Ok((first_line, headers, body))
 }
 
-/// Reads a message body from the reader. The body_length is used to determine how much to read.
-fn read_body_exact(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, ParsingError> {
+/// Reads a message body from the reader using the given headers.
+fn read_body(reader: &mut BufReader<impl Read>, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
+    if let Some(body_length) = get_content_length(headers) {
+        read_body_with_length(reader, body_length?)
+    } else if is_chunked_transfer_encoding(headers) {
+        read_chunked_body(reader)
+    } else if read_if_no_content_length {
+        read_body_to_end(reader)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// Gets the value of a content-length header from the given header map. May return None if there's
+/// no content-length header, or an error if the content-length value can not be parsed.
+fn get_content_length(headers: &HeaderMap) -> Option<Result<usize, ParsingError>> {
+    headers.get_first_header_value(&CONTENT_LENGTH)
+        .map(|value| value.parse().map_err(|_| ParsingError::InvalidHeaderValue))
+}
+
+/// Checks if the header map has chunked transfer encoding header value.
+fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
+    headers.get_first_header_value(&TRANSFER_ENCODING).map(|v| v.eq("chunked")).unwrap_or(false)
+}
+
+/// Reads a message body from the reader with a defined length.
+fn read_body_with_length(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, ParsingError> {
     let mut buf = vec![0; body_length];
     reader.read_exact(&mut buf)?;
     Ok(buf)
+}
+
+/// Reads a chunked body from the reader.
+fn read_chunked_body(reader: &mut BufReader<impl Read>) -> Result<Vec<u8>, ParsingError> {
+    let mut body = vec![];
+    loop {
+        let line = read_line(reader)?;
+        // TODO change error
+        let size = usize::from_str_radix(&line, 16).map_err(|_| ParsingError::InvalidHeaderValue)?;
+
+        if size == 0 {
+            break;
+        }
+
+        let mut buf = vec![0; size];
+        reader.read_exact(&mut buf)?;
+        body.append(&mut buf);
+
+        // get rid of crlf
+        read_line(reader)?;
+    }
+
+    // get rid of trailing crlf
+    read_line(reader)?;
+
+    Ok(body)
 }
 
 /// Reads a message body from the reader. Reads until there's nothing left to read from.
@@ -126,6 +175,8 @@ pub fn parse_header_name(raw: &str) -> Header {
         return CONTENT_LENGTH;
     } else if "content-type".eq_ignore_ascii_case(raw) {
         return CONTENT_TYPE;
+    } else if "transfer-encoding".eq_ignore_ascii_case(raw) {
+        return TRANSFER_ENCODING;
     }
     Header::Custom(raw.to_lowercase())
 }

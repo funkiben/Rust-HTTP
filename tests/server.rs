@@ -24,14 +24,14 @@ fn test_multiple_concurrent_connections() {
 
     let request1 = Request {
         uri: "/".to_string(),
-        method: Method::Get,
+        method: Method::GET,
         headers: Default::default(),
         body: vec![],
     };
 
     let request2 = Request {
         uri: "/foo".to_string(),
-        method: Method::Get,
+        method: Method::GET,
         headers: HeaderMapOps::from(vec![
             (CONTENT_LENGTH, "5".to_string()),
             (Header::Custom(String::from("custom-header")), "custom header value".to_string()),

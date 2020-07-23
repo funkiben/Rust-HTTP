@@ -145,7 +145,7 @@ impl Connection {
 
 /// Reads a response from the reader.
 fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, ResponseParsingError> {
-    let (first_line, headers, body) = read_message(reader, false)?;
+    let (first_line, headers, body) = read_message(reader, true)?;
 
     let (http_version, status) = parse_first_line(&first_line)?;
 

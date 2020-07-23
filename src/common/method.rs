@@ -4,13 +4,13 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Method {
     /// GET method.
-    Get,
+    GET,
     /// POST method.
-    Post,
+    POST,
     /// DELETE method.
-    Delete,
+    DELETE,
     /// PUT method
-    Put,
+    PUT,
 }
 
 impl Display for Method {
