@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Error, Read};
 
-use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
+use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
@@ -158,21 +158,5 @@ pub fn parse_header(raw: String) -> Result<(Header, String), ParsingError> {
     let header_raw = split.next().ok_or(ParsingError::BadSyntax)?;
     let value = split.next().ok_or(ParsingError::BadSyntax)?;
 
-    Ok((parse_header_name(header_raw), String::from(value)))
-}
-
-/// Parses the given header name. Will try to use a predefined header constant if possible to save memory.
-/// Otherwise, will return a Custom header.
-pub fn parse_header_name(raw: &str) -> Header {
-    // TODO
-    if "connection".eq_ignore_ascii_case(raw) {
-        return CONNECTION;
-    } else if "content-length".eq_ignore_ascii_case(raw) {
-        return CONTENT_LENGTH;
-    } else if "content-type".eq_ignore_ascii_case(raw) {
-        return CONTENT_TYPE;
-    } else if "transfer-encoding".eq_ignore_ascii_case(raw) {
-        return TRANSFER_ENCODING;
-    }
-    Header::Custom(raw.to_lowercase())
+    Ok((Header::from(header_raw), String::from(value)))
 }

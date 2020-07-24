@@ -1,42 +1,71 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-use crate::common::header::Header::{Custom, Normal};
-
-/// Connection header.
-pub const CONNECTION: Header = Normal("connection");
-/// Content-Length header.
-pub const CONTENT_LENGTH: Header = Normal("content-length");
-/// Content-Type header.
-pub const CONTENT_TYPE: Header = Normal("content-type");
-/// Transfer-Encoding header.
-pub const TRANSFER_ENCODING: Header = Normal("transfer-encoding");
+use crate::common::header::Header::{Custom, Predefined};
 
 /// A header. Is either a predefined "Normal" header with a static string, or a "Custom" header with a uniquely allocated String.
 /// The "Normal" variant is to reuse memory for frequently seen headers.
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum Header {
-    Normal(&'static str),
+    Predefined(&'static str),
     Custom(String),
 }
 
 impl Display for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Normal(s) => f.write_str(s),
+            Predefined(s) => f.write_str(s),
             Custom(s) => f.write_str(s)
         }
     }
 }
 
 impl Header {
-    /// Gets the given header as a string slice.
+    /// Gets a header from a string slice.
     pub fn as_str(&self) -> &str {
         match self {
-            Normal(s) => s,
+            Predefined(s) => s,
             Custom(s) => &s
         }
     }
+}
+
+macro_rules! headers {
+    (
+        $(
+            $(#[$docs:meta])*
+            ($name:ident, $value:expr);
+        )+
+    ) => {
+        $(
+            $(#[$docs])*
+            pub const $name: Header = Header::Predefined($value);
+        )+
+
+        impl Header {
+            /// Gets a header from the given string representing the header name.
+            pub fn from(value: &str) -> Header {
+                let value = value.to_lowercase();
+                match value.as_str() {
+                    $(
+                    $value => $name,
+                    )+
+                    _ => Header::Custom(value)
+                }
+            }
+        }
+    }
+}
+
+headers! {
+    /// Connection header.
+    (CONNECTION, "connection");
+    /// Content-Length header.
+    (CONTENT_LENGTH, "content-length");
+    /// Content-Type header.
+    (CONTENT_TYPE, "content-type");
+    /// Transfer-Encoding header.
+    (TRANSFER_ENCODING, "transfer-encoding");
 }
 
 /// Operations for a header map.
@@ -82,7 +111,7 @@ impl HeaderMapOps for HeaderMap {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderMapOps};
+    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderMapOps, Header};
 
     #[test]
     fn header_map() {
@@ -123,5 +152,15 @@ mod tests {
         assert_eq!(headers.get_first_header_value(&CONNECTION).unwrap(), "value 1");
         assert_eq!(headers.get_first_header_value(&CONTENT_LENGTH).unwrap(), "5");
         assert_eq!(headers.get_first_header_value(&CONTENT_TYPE).unwrap(), "something");
+    }
+
+    #[test]
+    fn predefined_header_from_str() {
+        assert_eq!(CONNECTION, Header::from("ConnEctiOn"));
+    }
+
+    #[test]
+    fn custom_header_from_str() {
+        assert_eq!(Header::Custom("custom-header".to_string()), Header::from("Custom-Header"));
     }
 }

@@ -4,6 +4,7 @@ use my_http::client::{Client, Config, RequestError};
 use my_http::common::header::{HeaderMapOps, Header};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
+use my_http::common::status::OK_200;
 
 #[test]
 fn test_single_connection() -> Result<(), RequestError> {
@@ -23,6 +24,9 @@ fn test_single_connection() -> Result<(), RequestError> {
     })?;
 
     println!("{}", String::from_utf8_lossy(&response.body));
+
+    assert_eq!(response.status, OK_200);
+    assert!(!response.body.is_empty());
 
     Ok(())
 }

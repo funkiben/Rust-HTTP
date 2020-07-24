@@ -7,7 +7,7 @@ use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200, Status};
+use crate::common::status::Status;
 pub use crate::util::parse::ParsingError;
 use crate::util::parse::read_message;
 
@@ -166,16 +166,18 @@ fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> 
 
 /// Parses the status code.
 fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
-    // TODO
-    if code.eq("200") {
-        Ok(OK_200)
-    } else if code.eq("404") {
-        Ok(NOT_FOUND_404)
-    } else if code.eq("400") {
-        Ok(BAD_REQUEST_400)
-    } else {
-        Err(ResponseParsingError::InvalidStatusCode)
-    }
+    // // TODO
+    // if code.eq("200") {
+    //     Ok(OK_200)
+    // } else if code.eq("404") {
+    //     Ok(NOT_FOUND_404)
+    // } else if code.eq("400") {
+    //     Ok(BAD_REQUEST_400)
+    // } else {
+    //     Err(ResponseParsingError::InvalidStatusCode)
+    // }
+    let code = code.parse().map_err(|_| ResponseParsingError::InvalidStatusCode)?;
+    Status::from_code(code).ok_or(ResponseParsingError::InvalidStatusCode)
 }
 
 /// Writes the given request to the given writer.
@@ -199,12 +201,12 @@ mod tests {
 
     use crate::client::{Client, Config};
     use crate::client::client::{read_next_response, ResponseParsingError};
-    use crate::client::ResponseParsingError::{InvalidStatusCode};
+    use crate::client::ResponseParsingError::InvalidStatusCode;
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200};
     use crate::util::mock::MockReader;
-    use crate::util::parse::ParsingError::{EOF, InvalidHeaderValue, UnexpectedEOF, WrongHttpVersion, Reading, BadSyntax};
+    use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::from(data);
@@ -330,6 +332,22 @@ mod tests {
                 headers: Default::default(),
                 body: vec![],
             }),
+        );
+    }
+
+    #[test]
+    fn invalid_status_code() {
+        test_read_next_response(
+            vec!["HTTP/1.1 300000 Not Found\r\n\r\n"],
+            Err(InvalidStatusCode),
+        );
+    }
+
+    #[test]
+    fn negative_status_code() {
+        test_read_next_response(
+            vec!["HTTP/1.1 -30 Not Found\r\n\r\n"],
+            Err(InvalidStatusCode),
         );
     }
 

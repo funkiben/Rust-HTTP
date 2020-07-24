@@ -158,17 +158,12 @@ fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingEr
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
 fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
-    // TODO
-    if raw.eq("GET") {
-        Ok(GET)
-    } else if raw.eq("POST") {
-        Ok(POST)
-    } else if raw.eq("DELETE") {
-        Ok(DELETE)
-    } else if raw.eq("PUT") {
-        Ok(PUT)
-    } else {
-        Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
+    match raw {
+        "GET" => Ok(GET),
+        "POST" => Ok(POST),
+        "DELETE" => Ok(DELETE),
+        "PUT" => Ok(PUT),
+        _ => Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
     }
 }
 
