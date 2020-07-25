@@ -166,16 +166,6 @@ fn parse_first_line(line: &str) -> Result<(&str, Status), ResponseParsingError> 
 
 /// Parses the status code.
 fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
-    // // TODO
-    // if code.eq("200") {
-    //     Ok(OK_200)
-    // } else if code.eq("404") {
-    //     Ok(NOT_FOUND_404)
-    // } else if code.eq("400") {
-    //     Ok(BAD_REQUEST_400)
-    // } else {
-    //     Err(ResponseParsingError::InvalidStatusCode)
-    // }
     let code = code.parse().map_err(|_| ResponseParsingError::InvalidStatusCode)?;
     Status::from_code(code).ok_or(ResponseParsingError::InvalidStatusCode)
 }
