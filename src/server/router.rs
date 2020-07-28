@@ -48,8 +48,8 @@ impl Router {
     /// Like on_prefix, but instead passes all requests that start with the given URI to router.
     /// The prefix is removed from the URI before being passed to router.
     /// ```
-    /// use my_http::server::router::Router;
-    /// use my_http::server::router::ListenerResult::Next;
+    /// use my_http::server::Router;
+    /// use my_http::server::ListenerResult::Next;
     /// use std::collections::HashMap;
     /// use my_http::common::request::Request;
     ///

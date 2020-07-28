@@ -40,6 +40,8 @@ status_codes! {
     (BAD_REQUEST_400, 400, "BAD REQUEST");
     /// 404 Not Found status.
     (NOT_FOUND_404,  404, "NOT FOUND");
+    /// 301 Moved Permanently
+    (MOVED_PERMANENTLY_301,  301, "MOVED PERMANENTLY");
 }
 
 #[cfg(test)]

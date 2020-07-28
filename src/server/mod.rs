@@ -1,8 +1,7 @@
 pub use config::*;
 pub use server::*;
+pub use router::*;
 
 mod server;
 mod config;
-
-/// Router for handling requests sent to an HTTP server.
-pub mod router;
+mod router;

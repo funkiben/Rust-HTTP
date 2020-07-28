@@ -11,11 +11,11 @@ use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status::{OK_200, Status};
 use my_http::server::Config;
-use my_http::server::router::ListenerResult::SendResponse;
+use my_http::server::ListenerResult::SendResponse;
 use my_http::server::Server;
 
 #[test]
-fn test_multiple_concurrent_connections() {
+fn multiple_concurrent_connections() {
     let mut server = Server::new(Config {
         addr: "localhost:7878",
         connection_handler_threads: 5,

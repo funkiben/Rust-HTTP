@@ -8,8 +8,8 @@ use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::{Config, Server};
-use my_http::server::router::ListenerResult::{SendResponse, SendResponseArc};
-use my_http::server::router::Router;
+use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
+use my_http::server::Router;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {

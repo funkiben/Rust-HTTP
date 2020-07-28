@@ -20,16 +20,6 @@ impl Display for Header {
     }
 }
 
-impl Header {
-    /// Gets a header from a string slice.
-    pub fn as_str(&self) -> &str {
-        match self {
-            Predefined(s) => s,
-            Custom(s) => &s
-        }
-    }
-}
-
 macro_rules! headers {
     (
         $(
@@ -66,6 +56,8 @@ headers! {
     (CONTENT_TYPE, "content-type");
     /// Transfer-Encoding header.
     (TRANSFER_ENCODING, "transfer-encoding");
+    /// Host header.
+    (HOST, "host");
 }
 
 /// Operations for a header map.
