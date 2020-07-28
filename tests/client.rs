@@ -1,13 +1,13 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::spawn;
 use std::time::Duration;
 
-use my_http::client::{Client, Config};
-use my_http::common::header::{Header, HeaderMap, HeaderMapOps};
+use my_http::common::header::{Header, HeaderMapOps, HeaderMap};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::status::OK_200;
+use my_http::client::{Client, Config};
+use std::collections::HashMap;
 
 #[test]
 fn single_connection_google() {

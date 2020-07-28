@@ -60,10 +60,29 @@ headers! {
     (HOST, "host");
 }
 
+/// Creates a map of headers.
+/// ```
+/// use my_http::common::header::{CONNECTION, CONTENT_TYPE, CONTENT_LENGTH, Header, TRANSFER_ENCODING, HeaderMapOps};
+/// use my_http::header_map;
+///
+/// let headers = header_map![
+///    (CONNECTION, "keep-alive"),
+///    (CONTENT_LENGTH, "5"),
+///    ("custom-header", "hello"),
+///    ("coNtEnt-TyPE", "something"),
+///    ("Transfer-encoding", "chunked")
+/// ];
+///
+/// assert!(headers.contains_header_value(&CONNECTION, "keep-alive"));
+/// assert!(headers.contains_header_value(&CONTENT_LENGTH, "5"));
+/// assert!(headers.contains_header_value(&CONTENT_TYPE, "something"));
+/// assert!(headers.contains_header_value(&Header::Custom("custom-header".into()), "hello"));
+/// assert!(headers.contains_header_value(&TRANSFER_ENCODING, "chunked"));
+/// ```
 #[macro_export]
 macro_rules! header_map {
     ($(($header:expr, $value:expr)),+ $(,)?) => {
-        HeaderMap::from_pairs(vec![
+        <$crate::common::header::HeaderMap as $crate::common::header::HeaderMapOps>::from_pairs(vec![
             $(($header.into(), $value.into()),)+
         ])
     }

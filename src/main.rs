@@ -4,7 +4,7 @@ use std::io::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps, HeaderMap};
+use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::{Config, Server};

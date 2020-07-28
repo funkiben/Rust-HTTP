@@ -5,7 +5,7 @@ use std::net::{Shutdown, TcpStream};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
+use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMapOps, HeaderMap};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
@@ -91,6 +91,7 @@ fn multiple_concurrent_connections() {
                 || String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncontent-length: 7\r\ncustom-header-2: custom header value 2\r\n\r\nwelcome"));
 
             client.shutdown(Shutdown::Both).unwrap();
+
         }));
     }
 
