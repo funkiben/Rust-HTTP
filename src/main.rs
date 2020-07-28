@@ -69,7 +69,7 @@ fn file_response(file_path: &str) -> Response {
 
         return Response { status: OK_200, headers, body: contents };
     }
-    return Response::from(NOT_FOUND_404);
+    return Response::from_status(NOT_FOUND_404);
 }
 
 fn get_content_type(path: &str) -> Option<&'static str> {

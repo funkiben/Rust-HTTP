@@ -13,8 +13,7 @@ pub struct Response {
 }
 
 impl Response {
-    /// Creates a response with the given status. The response will have no body.
-    pub fn from(status: Status) -> Response {
+    pub fn from_status(status: Status) -> Self {
         Response {
             status,
             headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),
