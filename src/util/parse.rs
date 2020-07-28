@@ -167,7 +167,7 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::util::mock::MockReader;
     use crate::util::parse::{ParsingError, read_message};
-    use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, InvalidChunkSize};
+    use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::from(input);
@@ -192,7 +192,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
         );
     }
@@ -203,7 +203,7 @@ mod tests {
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
         );
     }
@@ -214,7 +214,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "5".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
         );
     }
@@ -237,7 +237,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "1054".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
                 body.to_vec())),
         );
     }
@@ -270,7 +270,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
+                HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
                 vec![])),
         );
     }
@@ -411,7 +411,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "7".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
                 "helloHT".as_bytes().to_vec())),
         );
     }
@@ -422,7 +422,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(CONTENT_LENGTH, "3".to_string())]),
+                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
                 "hel".as_bytes().to_vec())),
         );
     }
@@ -441,7 +441,7 @@ mod tests {
                  "\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 "hello world hello".as_bytes().to_vec())),
         );
     }
@@ -475,7 +475,7 @@ mod tests {
                  "\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 "he\rllo world hello".as_bytes().to_vec())),
         );
     }
@@ -511,7 +511,7 @@ mod tests {
                  "\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 "he\r\nc\r\nllo world hello".as_bytes().to_vec())),
         );
     }
@@ -607,7 +607,7 @@ mod tests {
                  "\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMapOps::from(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 vec![])),
         );
     }

@@ -1,6 +1,6 @@
 pub use config::*;
-pub use server::*;
 pub use router::*;
+pub use server::*;
 
 mod server;
 mod config;

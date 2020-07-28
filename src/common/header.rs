@@ -32,9 +32,9 @@ macro_rules! headers {
             pub const $name: Header = Header::Predefined($value);
         )+
 
-        impl Header {
+        impl From<&str> for Header {
             /// Gets a header from the given string representing the header name.
-            pub fn from(value: &str) -> Header {
+            fn from(value: &str) -> Header {
                 let value = value.to_lowercase();
                 match value.as_str() {
                     $(
@@ -60,10 +60,19 @@ headers! {
     (HOST, "host");
 }
 
+#[macro_export]
+macro_rules! header_map {
+    ($(($header:expr, $value:expr)),+ $(,)?) => {
+        HeaderMap::from_pairs(vec![
+            $(($header.into(), $value.into()),)+
+        ])
+    }
+}
+
 /// Operations for a header map.
 pub trait HeaderMapOps {
     /// Gets a header map from the given vector of header value and key pairs.
-    fn from(header_values: Vec<(Header, String)>) -> Self;
+    fn from_pairs(header_values: Vec<(Header, String)>) -> Self;
     /// Adds a header to the map.
     fn add_header(&mut self, k: Header, v: String);
     /// Checks if the map contains the given header and corresponding header value.
@@ -76,7 +85,7 @@ pub trait HeaderMapOps {
 pub type HeaderMap = HashMap<Header, Vec<String>>;
 
 impl HeaderMapOps for HeaderMap {
-    fn from(header_values: Vec<(Header, String)>) -> HeaderMap {
+    fn from_pairs(header_values: Vec<(Header, String)>) -> HeaderMap {
         header_values.into_iter().fold(HashMap::new(), |mut m, (header, value)| {
             m.add_header(header, value);
             m
@@ -103,7 +112,7 @@ impl HeaderMapOps for HeaderMap {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderMapOps, Header};
+    use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 
     #[test]
     fn header_map() {
@@ -126,8 +135,8 @@ mod tests {
     }
 
     #[test]
-    fn header_map_from() {
-        let headers: HeaderMap = HeaderMapOps::from(vec![
+    fn header_map_from_pairs() {
+        let headers: HeaderMap = HeaderMap::from_pairs(vec![
             (CONNECTION, String::from("value 1")),
             (CONTENT_LENGTH, String::from("5")),
             (CONNECTION, String::from("value 2")),
@@ -154,5 +163,33 @@ mod tests {
     #[test]
     fn custom_header_from_str() {
         assert_eq!(Header::Custom("custom-header".to_string()), Header::from("Custom-Header"));
+    }
+
+    #[test]
+    fn header_map_macro() {
+        let headers = header_map![
+            (CONNECTION, "value 1"),
+            (CONTENT_LENGTH, "5"),
+            (CONNECTION, "value 2"),
+            (CONTENT_TYPE, "something"),
+            (CONNECTION, "value 3"),
+            ("custom-header", "hello"),
+            ("coNneCtion", "value 4"),
+            ("transfer-encoding", "chunked")
+        ];
+
+        assert!(headers.contains_header_value(&CONNECTION, "value 1"));
+        assert!(headers.contains_header_value(&CONNECTION, "value 2"));
+        assert!(headers.contains_header_value(&CONNECTION, "value 3"));
+        assert!(headers.contains_header_value(&CONNECTION, "value 4"));
+        assert!(headers.contains_header_value(&CONTENT_LENGTH, "5"));
+        assert!(headers.contains_header_value(&CONTENT_TYPE, "something"));
+        assert!(headers.contains_header_value(&Header::Custom("custom-header".into()), "hello"));
+        assert!(headers.contains_header_value(&"transfer-encoding".into(), "chunked"));
+
+        assert_eq!(headers.get_first_header_value(&CONNECTION).unwrap(), "value 1");
+        assert_eq!(headers.get_first_header_value(&CONTENT_LENGTH).unwrap(), "5");
+        assert_eq!(headers.get_first_header_value(&CONTENT_TYPE).unwrap(), "something");
+        assert_eq!(headers.get_first_header_value(&TRANSFER_ENCODING).unwrap(), "chunked");
     }
 }

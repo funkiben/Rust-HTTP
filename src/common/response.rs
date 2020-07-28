@@ -16,7 +16,7 @@ impl Response {
     pub fn from_status(status: Status) -> Self {
         Response {
             status,
-            headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),
+            headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, String::from("0"))]),
             body: vec![],
         }
     }

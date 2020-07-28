@@ -4,12 +4,13 @@ use std::io::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
+use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps, HeaderMap};
 use my_http::common::response::Response;
 use my_http::common::status::{NOT_FOUND_404, OK_200};
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
 use my_http::server::Router;
+use my_http::header_map;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
@@ -22,7 +23,7 @@ fn main() -> Result<(), Error> {
         let message = b"You found the secret message!";
         SendResponse(Response {
             status: OK_200,
-            headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, "26".to_string())]),
+            headers: header_map![(CONTENT_LENGTH, "26")],
             body: message.to_vec(),
         })
     });
@@ -59,9 +60,7 @@ fn file_router(directory: &'static str) -> Router {
 
 fn file_response(file_path: &str) -> Response {
     if let Ok(contents) = fs::read(file_path) {
-        let mut headers = HashMap::new();
-
-        headers.add_header(CONTENT_LENGTH, contents.len().to_string());
+        let mut headers = header_map![(CONTENT_LENGTH, contents.len().to_string())];
 
         if let Some(content_type) = get_content_type(file_path) {
             headers.add_header(CONTENT_TYPE, String::from(content_type));

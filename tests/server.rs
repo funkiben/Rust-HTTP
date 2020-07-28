@@ -5,7 +5,7 @@ use std::net::{Shutdown, TcpStream};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMapOps};
+use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
@@ -32,7 +32,7 @@ fn multiple_concurrent_connections() {
     let request2 = Request {
         uri: "/foo".to_string(),
         method: Method::GET,
-        headers: HeaderMapOps::from(vec![
+        headers: HeaderMap::from_pairs(vec![
             (CONTENT_LENGTH, "5".to_string()),
             (Header::Custom(String::from("custom-header")), "custom header value".to_string()),
         ]),
@@ -57,7 +57,7 @@ fn multiple_concurrent_connections() {
                 code: 234,
                 reason: "hi",
             },
-            headers: HeaderMapOps::from(vec![
+            headers: HeaderMap::from_pairs(vec![
                 (CONTENT_LENGTH, "7".to_string()),
                 (Header::Custom(String::from("custom-header-2")), "custom header value 2".to_string()),
             ]),
@@ -91,7 +91,6 @@ fn multiple_concurrent_connections() {
                 || String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncontent-length: 7\r\ncustom-header-2: custom header value 2\r\n\r\nwelcome"));
 
             client.shutdown(Shutdown::Both).unwrap();
-
         }));
     }
 

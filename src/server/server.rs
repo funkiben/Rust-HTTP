@@ -338,7 +338,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONNECTION, String::from("close")),
                     (Header::Custom(String::from("something")), String::from("hello there goodbye")),
@@ -354,7 +354,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONTENT_LENGTH, String::from("0")),
                     (Header::Custom(String::from("something")), String::from("value 1")),
@@ -371,7 +371,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("0")),
                     (CONNECTION, String::from("close")),
                     (Header::Custom(String::from("something")), String::from("hello there goodbye")),
@@ -387,7 +387,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (Header::Custom(String::from("")), String::from("")),
                     (Header::Custom(String::from("")), String::from("")),
                 ]),
@@ -403,7 +403,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
                 body: body.to_vec(),
@@ -418,7 +418,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
                 body: body.to_vec(),
@@ -438,7 +438,7 @@ mod tests {
                 Request {
                     uri: String::from("/body1"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![
+                    headers: HeaderMap::from_pairs(vec![
                         (CONTENT_LENGTH, String::from("5")),
                     ]),
                     body: body1.to_vec(),
@@ -446,7 +446,7 @@ mod tests {
                 Request {
                     uri: String::from("/body2"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![
+                    headers: HeaderMap::from_pairs(vec![
                         (CONTENT_LENGTH, String::from("7")),
                     ]),
                     body: body2.to_vec(),
@@ -476,7 +476,7 @@ mod tests {
             vec![Request {
                 uri: String::from("/"),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (CONTENT_LENGTH, String::from("1131")),
                 ]),
                 body: body.to_vec(),
@@ -491,7 +491,7 @@ mod tests {
                 Request {
                     uri: String::from("/"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![(CONNECTION, String::from("close"))]),
+                    headers: HeaderMap::from_pairs(vec![(CONNECTION, String::from("close"))]),
                     body: vec![],
                 }
             ])
@@ -506,7 +506,7 @@ mod tests {
                 Request {
                     uri: String::from("/"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![
+                    headers: HeaderMap::from_pairs(vec![
                         (Header::Custom(String::from("hello")), String::from("value: foo"))
                     ]),
                     body: vec![],
@@ -641,7 +641,7 @@ mod tests {
                 Request {
                     uri: String::from("/"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("3"))]),
+                    headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, String::from("3"))]),
                     body: b"hel".to_vec(),
                 }
             ],
@@ -672,7 +672,7 @@ mod tests {
                 Request {
                     uri: String::from("/"),
                     method: Method::GET,
-                    headers: HeaderMapOps::from(vec![(CONTENT_LENGTH, String::from("0"))]),
+                    headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, String::from("0"))]),
                     body: vec![],
                 }],
             "HTTP/1.1 400 Bad Request\r\n\r\n");
@@ -682,7 +682,7 @@ mod tests {
     fn write_response_with_headers_and_body() {
         let response = Response {
             status: OK_200,
-            headers: HeaderMapOps::from(vec![
+            headers: HeaderMap::from_pairs(vec![
                 (CONTENT_TYPE, String::from("hello")),
                 (CONNECTION, String::from("bye")),
             ]),
@@ -718,7 +718,7 @@ mod tests {
     fn response_one_header_no_body_to_bytes() {
         let response = Response {
             status: OK_200,
-            headers: HeaderMapOps::from(vec![
+            headers: HeaderMap::from_pairs(vec![
                 (Header::Custom(String::from("custom header")), String::from("header value"))
             ]),
             body: vec![],

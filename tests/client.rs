@@ -1,13 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::spawn;
 use std::time::Duration;
 
-use my_http::common::header::{Header, HeaderMapOps};
+use my_http::client::{Client, Config};
+use my_http::common::header::{Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::status::OK_200;
-use my_http::client::{Client, Config};
-use std::collections::HashMap;
 
 #[test]
 fn single_connection_google() {
@@ -129,7 +129,7 @@ fn test_connection_pool(addr: &'static str, num_connections: usize, requests: us
             let response = client.send(&Request {
                 uri: "/".to_string(),
                 method: Method::GET,
-                headers: HeaderMapOps::from(vec![
+                headers: HeaderMap::from_pairs(vec![
                     (Header::Custom("accept-encoding".to_string()), "identity".to_string())
                 ]),
                 body: vec![],
