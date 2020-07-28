@@ -29,6 +29,46 @@ fn single_connection_google() {
 }
 
 #[test]
+fn reuse_connection_google() {
+    let client = Client::new(Config {
+        addr: "google.com:80",
+        read_timeout: Duration::from_secs(1),
+        num_connections: 1,
+    });
+
+    let response = client.send(&Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: HashMap::new(),
+        body: vec![],
+    }).unwrap();
+
+    assert_eq!(response.status, OK_200);
+    assert!(!response.body.is_empty());
+
+    let response = client.send(&Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: HashMap::new(),
+        body: vec![],
+    }).unwrap();
+
+    assert_eq!(response.status, OK_200);
+    assert!(!response.body.is_empty());
+
+
+    let response = client.send(&Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: HashMap::new(),
+        body: vec![],
+    }).unwrap();
+
+    assert_eq!(response.status, OK_200);
+    assert!(!response.body.is_empty());
+}
+
+#[test]
 #[ignore]
 fn single_connection_northeastern() {
     let client = Client::new(Config {
