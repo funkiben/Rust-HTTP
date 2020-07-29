@@ -1,8 +1,6 @@
 /// Basic thread pool utility.
 pub mod thread_pool;
 
-/// Basic HTTP message parsing functions shared by the server and client.
-pub mod parse;
-
+/// Utility for creating mock trait implementations.
 #[cfg(test)]
 pub mod mock;

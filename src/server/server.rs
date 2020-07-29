@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
+use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write, BufRead};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use crate::common::response::Response;
 use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
-use crate::util::parse::{ParsingError, read_message};
+use crate::common::parse::{ParsingError, read_message};
 use crate::util::thread_pool::ThreadPool;
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
@@ -138,7 +138,7 @@ fn is_read_timeout(error: &Error) -> bool {
 
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
-fn read_request(reader: &mut BufReader<impl Read>) -> Result<Request, RequestParsingError> {
+fn read_request(reader: &mut impl BufRead) -> Result<Request, RequestParsingError> {
     let (first_line, headers, body) = read_message(reader, false)?;
 
     let (method, uri, http_version) = parse_first_line(&first_line)?;

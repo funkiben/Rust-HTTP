@@ -14,7 +14,7 @@ use my_http::server::Router;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "0.0.0.0:80",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(1000),
     });

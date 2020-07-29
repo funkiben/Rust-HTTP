@@ -1,7 +1,12 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Error, Read};
+use std::io::{BufRead, Error, Read};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
+
+/// The maximum size a line can be in an HTTP message.
+/// A line is any data that is terminated by a CRLF.
+/// Without this limit, a connection may be kept open indefinitely if no new lines are sent.
+pub const MAX_LINE_LENGTH: u64 = 512;
 
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
@@ -34,20 +39,25 @@ impl From<Error> for ParsingError {
 /// the reader signals EOF). If it's false then no more data will be read after the headers, and the
 /// body will be empty.
 /// Returns a tuple of the first line of the request, the headers, and the body of the message.
-pub fn read_message(reader: &mut BufReader<impl Read>, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
-    let first_line = read_line(reader).map_err(|err|
-        if let ParsingError::UnexpectedEOF = err { ParsingError::EOF } else { err }
-    )?;
-
+pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
+    let first_line = read_first_line(reader)?;
     let headers = parse_headers(read_lines_until_empty_line(reader)?)?;
-
     let body = read_body(reader, &headers, read_if_no_content_length)?;
 
     Ok((first_line, headers, body))
 }
 
+/// Reads the first line of a message.
+/// Maps UnexpectedEOF errors to EOF errors because EOF's are expected here.
+/// An EOF found when reading the first line of a message means the connection has closed and nothing else will be transmitted.
+fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
+    read_line(reader).map_err(|err|
+        if let ParsingError::UnexpectedEOF = err { ParsingError::EOF } else { err }
+    )
+}
+
 /// Reads a message body from the reader using the given headers.
-fn read_body(reader: &mut BufReader<impl Read>, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
+fn read_body(reader: &mut impl BufRead, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
     if let Some(body_length) = get_content_length(headers) {
         read_body_with_length(reader, body_length?)
     } else if is_chunked_transfer_encoding(headers) {
@@ -79,7 +89,7 @@ fn read_body_with_length(reader: &mut impl Read, body_length: usize) -> Result<V
 }
 
 /// Reads a chunked body from the reader.
-fn read_chunked_body(reader: &mut BufReader<impl Read>) -> Result<Vec<u8>, ParsingError> {
+fn read_chunked_body(reader: &mut impl BufRead) -> Result<Vec<u8>, ParsingError> {
     let mut body = vec![];
     loop {
         let line = read_line(reader)?;
@@ -109,9 +119,9 @@ fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
 
 /// Reads a single line, assuming the line ends in a CRLF ("\r\n").
 /// The CRLF is not included in the returned string.
-fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, ParsingError> {
+fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    reader.take(MAX_LINE_LENGTH).read_line(&mut line)?;
 
     if line.is_empty() {
         return Err(ParsingError::UnexpectedEOF);
@@ -125,7 +135,7 @@ fn read_line(reader: &mut BufReader<impl Read>) -> Result<String, ParsingError> 
 }
 
 /// Reads lines from the buffered reader. The returned lines do not include a CRLF.
-fn read_lines_until_empty_line(reader: &mut BufReader<impl Read>) -> Result<Vec<String>, ParsingError> {
+fn read_lines_until_empty_line(reader: &mut impl BufRead) -> Result<Vec<String>, ParsingError> {
     let mut lines = Vec::new();
 
     loop {
@@ -166,8 +176,8 @@ mod tests {
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::util::mock::MockReader;
-    use crate::util::parse::{ParsingError, read_message};
-    use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
+    use crate::common::parse::{ParsingError, read_message};
+    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::from(input);
@@ -176,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_no_headers_or_body() {
+    fn no_headers_or_body() {
         test_read_message(
             vec!["blah blah blah\r\n\r\n"],
             false,
@@ -187,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_headers_and_body() {
+    fn headers_and_body() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             false,
@@ -198,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_headers_and_body_fragmented() {
+    fn headers_and_body_fragmented() {
         test_read_message(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             false,
@@ -209,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_one_request() {
+    fn only_one_message_returned() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
@@ -220,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_long_body() {
+    fn big_body() {
         let body = b"iuwrhgiuelrguihwleriughwleiruhglweiurhgliwerg fkwfowjeofjiwoefijwef \
         wergiuwehrgiuwehilrguwehlrgiuw fewfwferg wenrjg; weirng lwieurhg owieurhg oeiuwrhg oewirg er\
         gweuirghweiurhgleiwurhglwieurhglweiurhglewiurhto8w374yto8374yt9p18234u50982@#$%#$%^&%^*(^)&(\
@@ -265,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn read_custom_header() {
+    fn custom_header() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             false,
@@ -276,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_response() {
+    fn gibberish() {
         test_read_message(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
@@ -285,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_response_with_newline() {
+    fn gibberish_with_newline() {
         test_read_message(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             false,
@@ -294,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_with_crlf() {
+    fn gibberish_with_crlf() {
         test_read_message(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
@@ -303,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_with_crlfs_at_end() {
+    fn gibberish_with_crlfs_at_end() {
         test_read_message(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
@@ -316,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn read_all_newlines() {
+    fn all_newlines() {
         test_read_message(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             false,
@@ -325,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn read_all_crlfs() {
+    fn all_crlfs() {
         test_read_message(
             vec!["\r\n\r\n\r\n\r\n"],
             false,
@@ -611,4 +621,100 @@ mod tests {
                 vec![])),
         );
     }
+
+    #[test]
+    fn chunked_body_huge_chunk() {
+        let chunk = "eofjaiweughlwauehgliw uehfwaiuefhpqiwuefh lwieufh wle234532\
+                 57rgoi jgoai\"\"\"woirjgowiejfiuf hawlieuf halweifu hawef awef \
+                 weFIU HW iefu\t\r\n\r\nhweif uhweifuh qefq234523 812u9405834205 \
+                 8245 1#@%^#$*&&^(*&)()&%^$%#^$]\r;g]ew r;g]ege\n\r\n\r\noweijf ow\
+                 aiejf; aowiejf owf ifoa iwf aioerjf aoiwerjf laiuerwhgf lawiuefhj owfjdc\
+                  wf                 awefoi jwaeoif jwei          WEAOFIJ AOEWI FJA EFJ  few\
+                  wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                                  weiofj weoifj oweijfo qwiejfo quehfow uehfo qiwjfpo qihw fpqeighpqf efoiwej foq\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowi\r\nefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj ae\r\nlirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj ae\nlirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf\n oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowi\nefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+                 wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
+         ";
+        test_read_message(
+            vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
+                 "C2A\r\n",
+                 chunk,
+                 "\r\n",
+                 "0\r\n",
+                 "\r\n"],
+            false,
+            Ok(("HTTP/1.1 200 OK".to_string(),
+                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                chunk.as_bytes().to_vec())),
+        );
+    }
+
+    #[test]
+    fn huge_first_line() {
+        test_read_message(
+            vec!["HTTP/1.1 200 OKroig jseorgi jpseoriegj seorigj epoirgj epsigrj paweorgj aeo\
+            6rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            4rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            3rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            2rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            1rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            4rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            8rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
+            9fj asodijv osdivj osidvja psijf pasidjf pas\r\n\
+            content-length: 5\r\n\r\nhello"],
+            false,
+            Err(BadSyntax),
+        );
+    }
+
+    #[test]
+    fn huge_header() {
+        test_read_message(
+            vec!["HTTP/1.1 200 OK\r\n",
+            "big-header: iowjfo iawjeofiajw pefiawjpefoi hwjpeiUF HWPIU4FHPAIWUHGPAIWUHGP AIWUHGRP \
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
+            3JFHVL AIJFHVL AILIHiuh waiufh iefuhapergiu hapergiu hapeirug haeriug hsperg ",
+            "\r\n\r\n"],
+            false,
+            Err(BadSyntax)
+        );
+    }
+
 }

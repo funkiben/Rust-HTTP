@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Error, Read, Write};
+use std::io::{BufReader, BufWriter, Error, Write, BufRead};
 use std::net::TcpStream;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -8,8 +8,8 @@ use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::status::Status;
-pub use crate::util::parse::ParsingError;
-use crate::util::parse::read_message;
+pub use crate::common::parse::ParsingError;
+use crate::common::parse::read_message;
 
 /// Client for making HTTP requests.
 pub struct Client {
@@ -142,7 +142,7 @@ impl Connection {
 }
 
 /// Reads a response from the reader.
-fn read_next_response(reader: &mut BufReader<impl Read>) -> Result<Response, ResponseParsingError> {
+fn read_next_response(reader: &mut impl BufRead) -> Result<Response, ResponseParsingError> {
     let (first_line, headers, body) = read_message(reader, true)?;
 
     let (http_version, status) = parse_first_line(&first_line)?;
@@ -196,7 +196,7 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status;
     use crate::util::mock::MockReader;
-    use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::from(data);
@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_no_headers_or_body() {
+    fn no_headers_or_body() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_headers_and_body() {
+    fn headers_and_body() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             Ok(Response {
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_headers_and_body_fragmented() {
+    fn headers_and_body_fragmented() {
         test_read_next_response(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             Ok(Response {
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_one_request() {
+    fn only_one_response_read() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn read_request_long_body() {
+    fn long_body() {
         let body = b"iuwrhgiuelrguihwleriughwleiruhglweiurhgliwerg fkwfowjeofjiwoefijwef \
         wergiuwehrgiuwehilrguwehlrgiuw fewfwferg wenrjg; weirng lwieurhg owieurhg oeiuwrhg oewirg er\
         gweuirghweiurhgleiwurhglwieurhglweiurhglewiurhto8w374yto8374yt9p18234u50982@#$%#$%^&%^*(^)&(\
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn read_no_content_length() {
+    fn no_content_length() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn read_custom_header() {
+    fn custom_header() {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             Ok(Response {
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn read_404_response() {
+    fn not_found_404_response() {
         test_read_next_response(
             vec!["HTTP/1.1 404 Not Found\r\n\r\n"],
             Ok(Response {
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_response() {
+    fn gibberish_response() {
         test_read_next_response(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             Err(UnexpectedEOF.into()),
@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_response_with_newline() {
+    fn gibberish_with_newline() {
         test_read_next_response(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             Err(UnexpectedEOF.into()),
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_with_crlf() {
+    fn gibberish_with_crlf() {
         test_read_next_response(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             Err(BadSyntax.into()),
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn read_gibberish_with_crlfs_at_end() {
+    fn gibberish_with_crlfs_at_end() {
         test_read_next_response(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             Err(InvalidStatusCode),
@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn read_all_newlines() {
+    fn all_newlines() {
         test_read_next_response(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             Err(BadSyntax.into()),
@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn read_all_crlfs() {
+    fn all_crlfs() {
         test_read_next_response(
             vec!["\r\n\r\n\r\n\r\n"],
             Err(BadSyntax.into()),
