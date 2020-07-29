@@ -1,13 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::spawn;
 use std::time::Duration;
 
-use my_http::common::header::{Header, HeaderMapOps, HeaderMap};
+use my_http::client::{Client, Config};
+use my_http::common::header::{Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
-use my_http::common::status::OK_200;
-use my_http::client::{Client, Config};
-use std::collections::HashMap;
+use my_http::common::status;
 
 #[test]
 fn single_connection_google() {
@@ -24,7 +24,7 @@ fn single_connection_google() {
         body: vec![],
     }).unwrap();
 
-    assert_eq!(response.status, OK_200);
+    assert_eq!(response.status, status::OK);
     assert!(!response.body.is_empty());
 }
 
@@ -43,7 +43,7 @@ fn reuse_connection_google() {
         body: vec![],
     }).unwrap();
 
-    assert_eq!(response.status, OK_200);
+    assert_eq!(response.status, status::OK);
     assert!(!response.body.is_empty());
 
     let response = client.send(&Request {
@@ -53,7 +53,7 @@ fn reuse_connection_google() {
         body: vec![],
     }).unwrap();
 
-    assert_eq!(response.status, OK_200);
+    assert_eq!(response.status, status::OK);
     assert!(!response.body.is_empty());
 
 
@@ -64,7 +64,7 @@ fn reuse_connection_google() {
         body: vec![],
     }).unwrap();
 
-    assert_eq!(response.status, OK_200);
+    assert_eq!(response.status, status::OK);
     assert!(!response.body.is_empty());
 }
 
@@ -86,7 +86,7 @@ fn single_connection_northeastern() {
 
     println!("{}", String::from_utf8_lossy(&response.body));
 
-    assert_eq!(response.status, OK_200);
+    assert_eq!(response.status, status::OK);
     assert!(!response.body.is_empty());
 }
 
@@ -135,7 +135,7 @@ fn test_connection_pool(addr: &'static str, num_connections: usize, requests: us
                 body: vec![],
             }).unwrap();
 
-            assert_eq!(response.status, OK_200);
+            assert_eq!(response.status, status::OK);
             assert!(!response.body.is_empty());
         });
 

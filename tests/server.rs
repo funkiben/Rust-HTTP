@@ -9,7 +9,8 @@ use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
-use my_http::common::status::{OK_200, Status};
+use my_http::common::status;
+use my_http::common::status::Status;
 use my_http::server::Config;
 use my_http::server::ListenerResult::SendResponse;
 use my_http::server::Server;
@@ -43,7 +44,7 @@ fn multiple_concurrent_connections_with_many_requests() {
         assert_eq!("/", uri);
         assert_eq!(*request, request1);
         SendResponse(Response {
-            status: OK_200,
+            status: status::OK,
             headers: Default::default(),
             body: vec![],
         })

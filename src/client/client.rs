@@ -194,7 +194,7 @@ mod tests {
     use crate::client::ResponseParsingError::InvalidStatusCode;
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
-    use crate::common::status::{BAD_REQUEST_400, NOT_FOUND_404, OK_200};
+    use crate::common::status;
     use crate::util::mock::MockReader;
     use crate::util::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
 
@@ -210,7 +210,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: Default::default(),
                 body: vec![],
             }),
@@ -222,7 +222,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
@@ -234,7 +234,7 @@ mod tests {
         test_read_next_response(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
@@ -246,7 +246,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
@@ -270,7 +270,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
                 body: body.to_vec(),
             }),
@@ -282,7 +282,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: Default::default(),
                 body: "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec(),
             }),
@@ -294,7 +294,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
                 body: vec![],
             }),
@@ -306,7 +306,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 404 Not Found\r\n\r\n"],
             Ok(Response {
-                status: NOT_FOUND_404,
+                status: status::NOT_FOUND,
                 headers: Default::default(),
                 body: vec![],
             }),
@@ -318,7 +318,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 400\r\n\r\n"],
             Ok(Response {
-                status: BAD_REQUEST_400,
+                status: status::BAD_REQUEST,
                 headers: Default::default(),
                 body: vec![],
             }),
@@ -474,7 +474,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
                 body: "helloHT".as_bytes().to_vec(),
             }),
@@ -486,7 +486,7 @@ mod tests {
         test_read_next_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             Ok(Response {
-                status: OK_200,
+                status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
                 body: "hel".as_bytes().to_vec(),
             }),

@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
 use my_http::common::response::Response;
-use my_http::common::status::{NOT_FOUND_404, OK_200};
+use my_http::common::status;
+use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
 use my_http::server::Router;
-use my_http::header_map;
 
 fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
@@ -22,7 +22,7 @@ fn main() -> Result<(), Error> {
     server.router.on("/secret/message/path", |_, _| {
         let message = b"You found the secret message!";
         SendResponse(Response {
-            status: OK_200,
+            status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "29")],
             body: message.to_vec(),
         })
@@ -66,9 +66,9 @@ fn file_response(file_path: &str) -> Response {
             headers.add_header(CONTENT_TYPE, String::from(content_type));
         }
 
-        return Response { status: OK_200, headers, body: contents };
+        return Response { status: status::OK, headers, body: contents };
     }
-    return Response::from_status(NOT_FOUND_404);
+    return Response::from_status(status::NOT_FOUND);
 }
 
 fn get_content_type(path: &str) -> Option<&'static str> {

@@ -90,7 +90,7 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
-    use crate::common::status::OK_200;
+    use crate::common::status;
     use crate::server::router::{ListenerResult, Router};
     use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 
@@ -127,7 +127,7 @@ mod tests {
 
     fn test_response() -> Response {
         Response {
-            status: OK_200,
+            status: status::OK,
             headers: Default::default(),
             body: vec![],
         }

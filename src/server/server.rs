@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Read, Write, ErrorKind, Error};
+use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
@@ -131,7 +131,7 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 }
 
 /// Checks if the given error is caused by a read timeout.
-fn is_read_timeout(error: &Error)-> bool {
+fn is_read_timeout(error: &Error) -> bool {
     // Linux uses WouldBlock, Windows uses TimedOut
     error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
 }
@@ -198,7 +198,8 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
-    use crate::common::status::{OK_200, Status};
+    use crate::common::status::Status;
+    use crate::common::status;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
@@ -688,7 +689,7 @@ mod tests {
     #[test]
     fn write_response_with_headers_and_body() {
         let response = Response {
-            status: OK_200,
+            status: status::OK,
             headers: HeaderMap::from_pairs(vec![
                 (CONTENT_TYPE, String::from("hello")),
                 (CONNECTION, String::from("bye")),
@@ -712,7 +713,7 @@ mod tests {
     #[test]
     fn response_no_header_or_body_to_bytes() {
         let response = Response {
-            status: OK_200,
+            status: status::OK,
             headers: HashMap::new(),
             body: vec![],
         };
@@ -724,7 +725,7 @@ mod tests {
     #[test]
     fn response_one_header_no_body_to_bytes() {
         let response = Response {
-            status: OK_200,
+            status: status::OK,
             headers: HeaderMap::from_pairs(vec![
                 (Header::Custom(String::from("custom header")), String::from("header value"))
             ]),
