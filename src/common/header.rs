@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-use crate::common::header::Header::{Custom, Predefined};
+use crate::common::header::Header::{Custom, Standard};
 
-/// A header. Is either a predefined "Normal" header with a static string, or a "Custom" header with a uniquely allocated String.
-/// The "Normal" variant is to reuse memory for frequently seen headers.
+/// A header. Is either a "Standard" header with a static string, or a "Custom" header with a uniquely allocated String.
+/// The "Standard" variant is to reuse memory for frequently seen headers.
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum Header {
-    Predefined(&'static str),
+    Standard(&'static str),
     Custom(String),
 }
 
 impl Display for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Predefined(s) => f.write_str(s),
+            Standard(s) => f.write_str(s),
             Custom(s) => f.write_str(s)
         }
     }
 }
 
-macro_rules! headers {
+macro_rules! standard_headers {
     (
         $(
             $(#[$docs:meta])*
@@ -47,7 +47,7 @@ macro_rules! headers {
     }
 }
 
-headers! {
+standard_headers! {
     (ACCEPT, "accept");
     (ACCEPT_CHARSET, "accept-charset");
     (ACCEPT_ENCODING, "accept-encoding");
