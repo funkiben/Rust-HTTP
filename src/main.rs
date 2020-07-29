@@ -16,14 +16,14 @@ fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
         addr: "localhost:7878",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        read_timeout: Duration::from_millis(1000),
     });
 
     server.router.on("/secret/message/path", |_, _| {
         let message = b"You found the secret message!";
         SendResponse(Response {
             status: OK_200,
-            headers: header_map![(CONTENT_LENGTH, "26")],
+            headers: header_map![(CONTENT_LENGTH, "29")],
             body: message.to_vec(),
         })
     });

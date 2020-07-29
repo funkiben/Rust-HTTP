@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write, ErrorKind, Error};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
@@ -124,9 +124,16 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
         match request {
             Ok(request) => if on_request(request) { return Ok(()); },
             Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
+            Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_read_timeout(error) => return Ok(()),
             err => return err.map(|_| {})
         }
     }
+}
+
+/// Checks if the given error is caused by a read timeout.
+fn is_read_timeout(error: &Error)-> bool {
+    // Linux uses WouldBlock, Windows uses TimedOut
+    error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
 }
 
 /// Reads a request from the given buffered reader.
