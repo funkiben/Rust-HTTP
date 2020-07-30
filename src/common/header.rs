@@ -29,7 +29,7 @@ macro_rules! standard_headers {
     ) => {
         $(
             $(#[$docs])*
-            pub const $name: Header = Header::Predefined($value);
+            pub const $name: Header = Header::Standard($value);
         )+
 
         impl From<&str> for Header {
