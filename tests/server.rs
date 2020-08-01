@@ -21,6 +21,7 @@ fn multiple_concurrent_connections_with_many_requests() {
         addr: "localhost:7878",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
+        tls_config: None
     });
 
     let request1 = Request {
@@ -71,12 +72,12 @@ fn multiple_concurrent_connections_with_many_requests() {
     sleep(Duration::from_millis(50));
 
     let mut handlers = vec![];
-    for _ in 0..13 {
+    for _ in 0..11 {
         handlers.push(spawn(|| {
             let mut client = TcpStream::connect("localhost:7878").unwrap();
 
             let mut iterations = 0;
-            let max_iterations = 15;
+            let max_iterations = 11;
 
             loop {
                 client.write(b"GET / HTTP/1.1\r\n\r\n").unwrap();

@@ -17,6 +17,7 @@ fn main() -> Result<(), Error> {
         addr: "0.0.0.0:80",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(1000),
+        tls_config: None,
     });
 
     server.router.on("/secret/message/path", |_, _| {

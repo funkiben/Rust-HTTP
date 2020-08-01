@@ -1,15 +1,15 @@
-use std::io::{BufReader, BufWriter, Error, Write, BufRead};
+use std::io::{BufRead, BufReader, BufWriter, Error, Write};
 use std::net::TcpStream;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
+pub use crate::common::parse::ParsingError;
+use crate::common::parse::read_message;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::status::Status;
-pub use crate::common::parse::ParsingError;
-use crate::common::parse::read_message;
 
 /// Client for making HTTP requests.
 pub struct Client {
@@ -193,10 +193,10 @@ mod tests {
     use crate::client::client::{read_next_response, ResponseParsingError};
     use crate::client::ResponseParsingError::InvalidStatusCode;
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
+    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
     use crate::common::response::Response;
     use crate::common::status;
     use crate::util::mock::MockReader;
-    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
 
     fn test_read_next_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::from(data);

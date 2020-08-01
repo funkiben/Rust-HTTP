@@ -12,3 +12,5 @@ pub mod response;
 pub mod status;
 /// Basic HTTP message parsing functions for requests and responses.
 pub(crate) mod parse;
+/// Stream using TLS.
+pub(crate) mod tls_stream;

@@ -1,17 +1,20 @@
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write, BufRead};
+use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
+
+use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::method::Method::{DELETE, GET, POST, PUT};
+use crate::common::parse::{ParsingError, read_message};
 use crate::common::request::Request;
 use crate::common::response::Response;
+use crate::common::tls_stream::TlsStream;
 use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
-use crate::common::parse::{ParsingError, read_message};
 use crate::util::thread_pool::ThreadPool;
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
@@ -38,6 +41,8 @@ pub struct Server {
     pub config: Config,
     /// The router used for handling requests received from connections
     pub router: Router,
+    /// The TLS config as an arc.
+    tls_config: Option<Arc<ServerConfig>>,
 }
 
 impl Server {
@@ -46,14 +51,17 @@ impl Server {
         Server {
             config,
             router: Router::new(),
+            tls_config: None,
         }
     }
 
     /// Starts the HTTP server. This function will block and listen for new connections.
-    pub fn start(self) -> std::io::Result<()> {
+    pub fn start(mut self) -> std::io::Result<()> {
         let listener = TcpListener::bind(self.config.addr)?;
 
         let thread_pool = ThreadPool::new(self.config.connection_handler_threads);
+
+        self.tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
 
         let server = Arc::new(self);
 
@@ -76,33 +84,53 @@ impl Server {
     fn handle_connection(&self, stream: TcpStream) {
         stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
 
-        respond_to_requests(&stream, &stream, &self.router)
+        if let Some(ref tls_config) = self.tls_config {
+            self.handle_tls_connection(tls_config, stream);
+        } else {
+            self.handle_non_tls_connection(stream);
+        }
+    }
+
+    /// Handles a new connection using plaintext.
+    fn handle_non_tls_connection(&self, stream: TcpStream) {
+        respond_to_requests(&stream, &stream, &self.router);
+    }
+
+    /// Handles a new connection using TLS.
+    fn handle_tls_connection(&self, tls_config: &Arc<ServerConfig>, stream: TcpStream) {
+        let stream = TlsStream::new(stream, ServerSession::new(tls_config));
+        respond_to_requests(&stream, &stream, &self.router);
     }
 }
 
 /// Uses the given router to respond to requests read from reader. Writes responses to writer.
 /// If the router has no route for a request, then a 404 response with no body is returned.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<'a, R: Read, W: Write>(reader: R, writer: W, router: &Router) {
+fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
     let mut writer = BufWriter::new(writer);
 
     let result = read_requests(reader, |request| {
-        let write_result = match router.result(&request) {
-            SendResponse(response) => write_response(&mut writer, &response),
-            SendResponseArc(response) => write_response(&mut writer, &response),
-            Next => writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
-        };
+        let write_result = write_response_from_router(&mut writer, router, &request);
         should_close_after_response(&request) || write_result.is_err()
     });
 
     if let Err(error) = result {
         // we dont really care if the response to an invalid request can't be written
-        respond_to_request_parsing_error(writer, error).unwrap_or(());
+        write_error_response(&mut writer, error).unwrap_or(());
     }
 }
 
-/// Responds to an error parsing a request.
-fn respond_to_request_parsing_error(mut writer: impl Write, error: RequestParsingError) -> std::io::Result<()> {
+/// Gets a response from the router and writes. If the router has no response, then writes a 404 response.
+fn write_response_from_router(writer: &mut impl Write, router: &Router, request: &Request) -> std::io::Result<()> {
+    match router.result(&request) {
+        SendResponse(response) => write_response(writer, &response),
+        SendResponseArc(response) => write_response(writer, &response),
+        Next => writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
+    }
+}
+
+/// Writes a response to the given request parsing error.
+fn write_error_response(writer: &mut impl Write, error: RequestParsingError) -> std::io::Result<()> {
     println!("Error: {:?}", error);
     writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
     writer.flush()
@@ -124,16 +152,18 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
         match request {
             Ok(request) => if on_request(request) { return Ok(()); },
             Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
-            Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_read_timeout(error) => return Ok(()),
+            Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_io_error_ok(error) => return Ok(()),
             err => return err.map(|_| {})
         }
     }
 }
 
-/// Checks if the given error is caused by a read timeout.
-fn is_read_timeout(error: &Error) -> bool {
-    // Linux uses WouldBlock, Windows uses TimedOut
+/// Checks if the given IO error is OK.
+fn is_io_error_ok(error: &Error) -> bool {
+    // WouldBlock and TimedOut are for read timeouts. Linux uses WouldBlock, Windows uses TimedOut
     error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
+        // ConnectionAborted is caused from https streams that have closed
+        || error.kind() == ErrorKind::ConnectionAborted
 }
 
 /// Reads a request from the given buffered reader.
@@ -198,8 +228,8 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::common::response::Response;
-    use crate::common::status::Status;
     use crate::common::status;
+    use crate::common::status::Status;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};

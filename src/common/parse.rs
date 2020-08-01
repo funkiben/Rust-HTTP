@@ -175,9 +175,9 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::util::mock::MockReader;
     use crate::common::parse::{ParsingError, read_message};
     use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
+    use crate::util::mock::MockReader;
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::from(input);
@@ -703,7 +703,7 @@ mod tests {
     fn huge_header() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n",
-            "big-header: iowjfo iawjeofiajw pefiawjpefoi hwjpeiUF HWPIU4FHPAIWUHGPAIWUHGP AIWUHGRP \
+                 "big-header: iowjfo iawjeofiajw pefiawjpefoi hwjpeiUF HWPIU4FHPAIWUHGPAIWUHGP AIWUHGRP \
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
@@ -711,10 +711,9 @@ mod tests {
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
             3JFHVL AIJFHVL AILIHiuh waiufh iefuhapergiu hapergiu hapeirug haeriug hsperg ",
-            "\r\n\r\n"],
+                 "\r\n\r\n"],
             false,
-            Err(BadSyntax)
+            Err(BadSyntax),
         );
     }
-
 }
