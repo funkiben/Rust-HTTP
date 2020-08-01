@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Read, Write};
+use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
@@ -6,9 +6,6 @@ use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
-use crate::common::method::Method;
-use crate::common::method::Method::{DELETE, GET, POST, PUT};
-use crate::common::parse::{ParsingError, read_message};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::tls_stream::TlsStream;
@@ -16,24 +13,10 @@ use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
+use crate::common::parse::{RequestParsingError, read_request, ParsingError};
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
-
-/// The possible errors that can be encountered when trying to parse a request.
-#[derive(Debug)]
-enum RequestParsingError {
-    /// Method is unrecognized.
-    UnrecognizedMethod(String),
-    /// Base parsing error.
-    Base(ParsingError),
-}
-
-impl From<ParsingError> for RequestParsingError {
-    fn from(err: ParsingError) -> Self {
-        RequestParsingError::Base(err)
-    }
-}
 
 /// An HTTP server.
 pub struct Server {
@@ -164,44 +147,6 @@ fn is_io_error_ok(error: &Error) -> bool {
     error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
         // ConnectionAborted is caused from https streams that have closed
         || error.kind() == ErrorKind::ConnectionAborted
-}
-
-/// Reads a request from the given buffered reader.
-/// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
-fn read_request(reader: &mut impl BufRead) -> Result<Request, RequestParsingError> {
-    let (first_line, headers, body) = read_message(reader, false)?;
-
-    let (method, uri, http_version) = parse_first_line(&first_line)?;
-
-    if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
-    }
-
-    Ok(Request { method, uri: uri.to_string(), headers, body })
-}
-
-
-/// Parses the given line as the first line of a request.
-/// The first lines of requests have the form: "Method Request-URI HTTP-Version CRLF"
-fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingError> {
-    let mut split = line.split(" ");
-
-    let method_raw = split.next().ok_or(ParsingError::BadSyntax)?;
-    let uri = split.next().ok_or(ParsingError::BadSyntax)?;
-    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
-
-    Ok((parse_method(method_raw)?, uri, http_version))
-}
-
-/// Parses the given string into a method. If the method is not recognized, will return an error.
-fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
-    match raw {
-        "GET" => Ok(GET),
-        "POST" => Ok(POST),
-        "DELETE" => Ok(DELETE),
-        "PUT" => Ok(PUT),
-        _ => Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
-    }
 }
 
 /// Writes the response as bytes to the given writer.

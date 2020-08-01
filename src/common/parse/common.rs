@@ -175,9 +175,10 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::common::parse::{ParsingError, read_message};
     use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
     use crate::util::mock::MockReader;
+    use crate::common::parse::common::read_message;
+    use crate::common::parse::ParsingError;
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::from(input);
