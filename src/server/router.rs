@@ -11,6 +11,7 @@ pub enum ListenerResult {
     Next,
     /// Stops execution of listeners for the request and immediately sends the response.
     SendResponse(Response),
+    /// Sends a shared response.
     SendResponseArc(Arc<Response>),
 }
 

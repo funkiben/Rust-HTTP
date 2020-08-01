@@ -13,6 +13,7 @@ pub struct Response {
 }
 
 impl Response {
+    /// Creates an empty response with the given status.
     pub fn from_status(status: Status) -> Self {
         Response {
             status,
