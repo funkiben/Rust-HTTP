@@ -18,3 +18,16 @@ impl Display for Method {
         write!(f, "{:?}", self)
     }
 }
+
+impl Method {
+    /// Converts the given string to a method. Methods are case sensitive. Returns None if no Method matches.
+    pub fn try_from_str(s: &str) -> Option<Method> {
+        match s {
+            "GET" => Some(Method::GET),
+            "POST" => Some(Method::POST),
+            "DELETE" => Some(Method::DELETE),
+            "PUT" => Some(Method::PUT),
+            _ => None
+        }
+    }
+}

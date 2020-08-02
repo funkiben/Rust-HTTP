@@ -35,14 +35,7 @@ fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingEr
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
 fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
-    // TODO move this to method module
-    match raw {
-        "GET" => Ok(Method::GET),
-        "POST" => Ok(Method::POST),
-        "DELETE" => Ok(Method::DELETE),
-        "PUT" => Ok(Method::PUT),
-        _ => Err(RequestParsingError::UnrecognizedMethod(String::from(raw)))
-    }
+    Method::try_from_str(raw).ok_or_else(|| RequestParsingError::UnrecognizedMethod(String::from(raw)))
 }
 
 #[cfg(test)]
@@ -51,10 +44,10 @@ mod tests {
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
-    use crate::common::parse::read_request;
     use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
     use crate::common::parse::error::RequestParsingError;
     use crate::common::parse::error::RequestParsingError::UnrecognizedMethod;
+    use crate::common::parse::read_request;
     use crate::common::request::Request;
     use crate::header_map;
     use crate::util::mock::MockReader;
