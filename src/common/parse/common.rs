@@ -1,37 +1,13 @@
 use std::collections::HashMap;
-use std::io::{BufRead, Error, Read};
+use std::io::{BufRead, Read};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
+use crate::common::parse::error::ParsingError;
 
 /// The maximum size a line can be in an HTTP message.
-/// A line is any data that is terminated by a CRLF.
+/// A line is any data that is terminated by a CRLF, e.g. a header.
 /// Without this limit, a connection may be kept open indefinitely if no new lines are sent.
-pub const MAX_LINE_LENGTH: u64 = 512;
-
-/// Error for when an HTTP message can't be parsed.
-#[derive(Debug)]
-pub enum ParsingError {
-    /// Invalid syntax in the message.
-    BadSyntax,
-    /// Message has wrong HTTP version.
-    WrongHttpVersion,
-    /// Header has invalid value.
-    InvalidHeaderValue,
-    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request or response.
-    UnexpectedEOF,
-    /// EOF found before any request or response can be read.
-    EOF,
-    /// Size of chunk in chunked transfer encoding can not be parsed as a number.
-    InvalidChunkSize,
-    /// Error reading from the reader.
-    Reading(Error),
-}
-
-impl From<Error> for ParsingError {
-    fn from(err: Error) -> Self {
-        ParsingError::Reading(err)
-    }
-}
+const MAX_LINE_LENGTH: u64 = 512;
 
 /// Reads the first line, headers, and body of any HTTP request or response.
 /// If a content length cannot be determined and read_if_no_content_length is true, then the
@@ -175,10 +151,10 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
-    use crate::util::mock::MockReader;
     use crate::common::parse::common::read_message;
-    use crate::common::parse::ParsingError;
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
+    use crate::common::parse::error::ParsingError;
+    use crate::util::mock::MockReader;
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::from(input);

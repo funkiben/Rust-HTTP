@@ -2,23 +2,9 @@ use std::io::BufRead;
 
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
-use crate::common::parse::common::{ParsingError, read_message};
+use crate::common::parse::common::read_message;
+use crate::common::parse::error::{ParsingError, RequestParsingError};
 use crate::common::request::Request;
-
-/// The possible errors that can be encountered when trying to parse a request.
-#[derive(Debug)]
-pub enum RequestParsingError {
-    /// Method is unrecognized.
-    UnrecognizedMethod(String),
-    /// Base parsing error.
-    Base(ParsingError),
-}
-
-impl From<ParsingError> for RequestParsingError {
-    fn from(err: ParsingError) -> Self {
-        RequestParsingError::Base(err)
-    }
-}
 
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
@@ -63,14 +49,15 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
 mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
-    use crate::common::header::{HeaderMap, CONTENT_LENGTH, CONNECTION};
+    use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
-    use crate::common::parse::{read_request, RequestParsingError};
-    use crate::common::parse::common::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, WrongHttpVersion, Reading, UnexpectedEOF};
-    use crate::common::parse::RequestParsingError::UnrecognizedMethod;
+    use crate::common::parse::read_request;
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::error::RequestParsingError;
+    use crate::common::parse::error::RequestParsingError::UnrecognizedMethod;
     use crate::common::request::Request;
-    use crate::util::mock::MockReader;
     use crate::header_map;
+    use crate::util::mock::MockReader;
 
     fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
         let reader = MockReader::from(data);

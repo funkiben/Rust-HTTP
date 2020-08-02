@@ -1,24 +1,10 @@
 use std::io::BufRead;
 
-use crate::common::parse::common::{ParsingError, read_message};
-use crate::common::response::Response;
 use crate::common::HTTP_VERSION;
+use crate::common::parse::common::read_message;
+use crate::common::parse::error::{ParsingError, ResponseParsingError};
+use crate::common::response::Response;
 use crate::common::status::Status;
-
-/// Error when parsing an HTTP response from a server.
-#[derive(Debug)]
-pub enum ResponseParsingError {
-    /// Response had an unknown status code.
-    InvalidStatusCode,
-    /// Base parsing error.
-    Base(ParsingError),
-}
-
-impl From<ParsingError> for ResponseParsingError {
-    fn from(err: ParsingError) -> Self {
-        ResponseParsingError::Base(err)
-    }
-}
 
 /// Reads a response from the reader.
 pub fn read_response(reader: &mut impl BufRead) -> Result<Response, ResponseParsingError> {
@@ -54,12 +40,13 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
-    use crate::common::parse::{read_response, ResponseParsingError};
-    use crate::common::parse::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::read_response;
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::error::ResponseParsingError;
+    use crate::common::parse::error::ResponseParsingError::InvalidStatusCode;
     use crate::common::response::Response;
     use crate::common::status;
     use crate::util::mock::MockReader;
-    use crate::common::parse::ResponseParsingError::InvalidStatusCode;
 
     fn test_read_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::from(data);

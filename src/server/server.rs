@@ -6,6 +6,8 @@ use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
+use crate::common::parse::read_request;
+use crate::common::parse::error::{ParsingError, RequestParsingError};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::tls_stream::TlsStream;
@@ -13,7 +15,6 @@ use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
-use crate::common::parse::{RequestParsingError, read_request, ParsingError};
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";

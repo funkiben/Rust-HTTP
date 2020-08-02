@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
+use crate::common::parse::read_response;
+use crate::common::parse::error::ResponseParsingError;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::common::parse::{ResponseParsingError, read_response};
 
 /// Client for making HTTP requests.
 pub struct Client {
@@ -139,8 +140,9 @@ fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<(
 
 #[cfg(test)]
 mod tests {
-    use crate::client::{Client, Config};
     use std::time::Duration;
+
+    use crate::client::{Client, Config};
 
     #[test]
     #[should_panic]

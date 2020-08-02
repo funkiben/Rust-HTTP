@@ -42,7 +42,7 @@ fn curl_request() {
 }
 
 #[test]
-fn curl_mutliple_requests_same_connection() {
+fn curl_multiple_requests_same_connection() {
     let mut server = Server::new(Config {
         addr: "localhost:7878",
         connection_handler_threads: 5,
