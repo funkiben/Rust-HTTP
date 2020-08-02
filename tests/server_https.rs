@@ -35,6 +35,7 @@ fn curl_request() {
     sleep(Duration::from_millis(1000));
 
     let output = Command::new("curl")
+        .arg("-k")
         .arg("--request").arg("GET").arg("https://localhost:7878")
         .output().unwrap();
 
@@ -63,6 +64,7 @@ fn curl_multiple_requests_same_connection() {
     sleep(Duration::from_millis(1000));
 
     let output = Command::new("curl")
+        .arg("-k")
         .arg("--request").arg("GET").arg("https://localhost:7878")
         .arg("--request").arg("GET").arg("https://localhost:7878")
         .arg("--request").arg("GET").arg("https://localhost:7878")
@@ -99,6 +101,7 @@ fn curl_multiple_concurrent_requests() {
     for _ in 0..20 {
         handlers.push(spawn(|| {
             let output = Command::new("curl")
+                .arg("-k")
                 .arg("--request").arg("GET").arg("https://localhost:7878")
                 .arg("--request").arg("GET").arg("https://localhost:7878")
                 .arg("--request").arg("GET").arg("https://localhost:7878")
@@ -118,21 +121,21 @@ fn curl_multiple_concurrent_requests() {
 fn get_tsl_config() -> ServerConfig {
     let mut config = ServerConfig::new(NoClientAuth::new());
 
-    let certs = load_certs("/Users/Ben/Code/ticker_strat_stuff/cert/dev/tickerstrat.io.crt");
-    let privkey = load_private_key("/Users/Ben/Code/ticker_strat_stuff/cert/dev/tickerstrat.io.key");
+    let certs = read_certs("./tests/certs/server.crt");
+    let privkey = read_private_key("./tests/certs/server.key");
 
     config.set_single_cert(certs, privkey).unwrap();
 
     config
 }
 
-fn load_certs(filename: &str) -> Vec<Certificate> {
+fn read_certs(filename: &str) -> Vec<Certificate> {
     let certfile = fs::File::open(filename).expect("cannot open certificate file");
     let mut reader = BufReader::new(certfile);
     rustls::internal::pemfile::certs(&mut reader).unwrap()
 }
 
-fn load_private_key(filename: &str) -> PrivateKey {
+fn read_private_key(filename: &str) -> PrivateKey {
     let rsa_keys = {
         let keyfile = fs::File::open(filename)
             .expect("cannot open private key file");
