@@ -108,8 +108,10 @@ fn curl_multiple_concurrent_requests() {
                 .arg("--request").arg("GET").arg("https://localhost:7878")
                 .arg("--request").arg("GET").arg("https://localhost:7878")
                 .arg("--request").arg("GET").arg("https://localhost:7878")
+                .arg("--request").arg("GET").arg("https://localhost:7878")
+                .arg("--request").arg("GET").arg("https://localhost:7878")
                 .output().unwrap();
-            assert_eq!("i worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
+            assert_eq!("i worki worki worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
         }));
     }
 
