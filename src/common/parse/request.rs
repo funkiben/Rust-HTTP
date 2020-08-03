@@ -44,7 +44,7 @@ mod tests {
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
-    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
     use crate::common::parse::error::RequestParsingError;
     use crate::common::parse::error::RequestParsingError::UnrecognizedMethod;
     use crate::common::parse::read_request;
@@ -317,7 +317,7 @@ mod tests {
     fn no_newlines() {
         test_read_request(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
-            Err(UnexpectedEOF.into()))
+            Err(BadSyntax.into()))
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
     fn bad_crlf() {
         test_read_request(
             vec!["GET / HTTP/1.1\n\r\n"],
-            Err(WrongHttpVersion.into()))
+            Err(BadSyntax.into()))
     }
 
     #[test]
@@ -373,14 +373,14 @@ mod tests {
     fn missing_crlf_after_last_header() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
-            Err(UnexpectedEOF.into()))
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
     }
 
     #[test]
     fn missing_crlfs() {
         test_read_request(
             vec!["GET / HTTP/1.1"],
-            Err(UnexpectedEOF.into()))
+            Err(BadSyntax.into()))
     }
 
     #[test]

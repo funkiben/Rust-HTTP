@@ -40,10 +40,10 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
-    use crate::common::parse::read_response;
-    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnexpectedEOF, WrongHttpVersion};
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
     use crate::common::parse::error::ResponseParsingError;
     use crate::common::parse::error::ResponseParsingError::InvalidStatusCode;
+    use crate::common::parse::read_response;
     use crate::common::response::Response;
     use crate::common::status;
     use crate::util::mock::MockReader;
@@ -195,7 +195,7 @@ mod tests {
     fn gibberish_response() {
         test_read_response(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
-            Err(UnexpectedEOF.into()),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -259,7 +259,7 @@ mod tests {
     fn missing_crlfs() {
         test_read_response(
             vec!["HTTP/1.1 200 OK"],
-            Err(UnexpectedEOF.into()),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -267,7 +267,7 @@ mod tests {
     fn only_one_crlf() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\n"],
-            Err(UnexpectedEOF.into()),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()),
         );
     }
 
@@ -299,7 +299,7 @@ mod tests {
     fn one_character() {
         test_read_response(
             vec!["a"],
-            Err(UnexpectedEOF.into()),
+            Err(BadSyntax.into()),
         );
     }
 
@@ -307,7 +307,7 @@ mod tests {
     fn one_crlf_nothing_else() {
         test_read_response(
             vec!["\r\n"],
-            Err(UnexpectedEOF.into()),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()),
         );
     }
 

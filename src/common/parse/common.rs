@@ -1,9 +1,9 @@
-use std::io::{BufRead, Read};
+use std::io::{BufRead, Error, ErrorKind, Read};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 use crate::common::parse::error::ParsingError;
-use crate::header_map;
 use crate::common::parse::error_take::ErrorTake;
+use crate::header_map;
 
 /// The maximum size a line can be in an HTTP message.
 /// A line is any data that is terminated by a CRLF, e.g. a header.
@@ -35,7 +35,10 @@ pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) 
 /// An EOF found when reading the first line of a message means the connection has closed and nothing else will be transmitted.
 fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     read_line(reader).map_err(|err|
-        if let ParsingError::UnexpectedEOF = err { ParsingError::EOF } else { err }
+        match err {
+            ParsingError::Reading(err) if err.kind() == ErrorKind::UnexpectedEof => ParsingError::EOF,
+            x => x
+        }
     )
 }
 
@@ -104,19 +107,24 @@ fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
 
 /// Reads a single line, assuming the line ends in a CRLF ("\r\n").
 /// The CRLF is not included in the returned string.
+/// If the line is empty and contains no CRLF, then a BadSyntax error is returned
 fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     let mut line = String::new();
     reader.error_take(MAX_LINE_LENGTH).read_line(&mut line)?;
 
     if line.is_empty() {
-        return Err(ParsingError::UnexpectedEOF);
+        return Err(Error::from(ErrorKind::UnexpectedEof).into());
     }
 
     // pop the \r\n off the end of the line
     line.pop();
-    line.pop();
 
-    Ok(line)
+    // make sure the second to last character is '\r' after popping '\n'
+    let last = line.pop();
+    match last {
+        Some('\r') => Ok(line),
+        _ => Err(ParsingError::BadSyntax),
+    }
 }
 
 /// Reads and parses headers from the given reader.
@@ -153,7 +161,7 @@ mod tests {
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::common::parse::common::read_message;
-    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
+    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
     use crate::common::parse::error::ParsingError;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
@@ -274,7 +282,7 @@ mod tests {
         test_read_message(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
-            Err(UnexpectedEOF),
+            Err(BadSyntax),
         );
     }
 
@@ -314,7 +322,7 @@ mod tests {
         test_read_message(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             false,
-            Ok(("".to_string(), Default::default(), vec![])),
+            Err(BadSyntax),
         );
     }
 
@@ -332,7 +340,7 @@ mod tests {
         test_read_message(
             vec!["HTTP/1.1 200 OK"],
             false,
-            Err(UnexpectedEOF),
+            Err(BadSyntax),
         );
     }
 
@@ -341,7 +349,7 @@ mod tests {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n"],
             false,
-            Err(UnexpectedEOF),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
@@ -377,7 +385,7 @@ mod tests {
         test_read_message(
             vec!["a"],
             false,
-            Err(UnexpectedEOF),
+            Err(BadSyntax),
         );
     }
 
@@ -386,7 +394,7 @@ mod tests {
         test_read_message(
             vec!["\r\n"],
             false,
-            Err(UnexpectedEOF),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
@@ -451,7 +459,7 @@ mod tests {
                  "3\r\n",
                  "llo\r\n"],
             false,
-            Err(UnexpectedEOF),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
@@ -468,9 +476,7 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
-                "he\rllo world hello".as_bytes().to_vec())),
+            Err(BadSyntax),
         );
     }
 
@@ -550,7 +556,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "zhelloiouf jwiufji ejif jef"],
             false,
-            Err(InvalidChunkSize),
+            Err(BadSyntax),
         );
     }
 
@@ -578,7 +584,7 @@ mod tests {
                  "llo\r\n",
                  "0\r\n"],
             false,
-            Err(UnexpectedEOF),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
@@ -589,7 +595,7 @@ mod tests {
                  "2\r\n",
                  "he"],
             false,
-            Err(UnexpectedEOF),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 

@@ -9,8 +9,6 @@ pub enum ParsingError {
     WrongHttpVersion,
     /// Header has invalid value.
     InvalidHeaderValue,
-    /// Unexpected EOF will be thrown when EOF is found in the middle of reading a request or response.
-    UnexpectedEOF,
     /// EOF found before any request or response can be read.
     EOF,
     /// Size of chunk in chunked transfer encoding can not be parsed as a number.
