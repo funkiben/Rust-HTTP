@@ -3,6 +3,7 @@ use std::io::{BufRead, Read};
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 use crate::common::parse::error::ParsingError;
 use crate::header_map;
+use crate::common::parse::error_take::ErrorTake;
 
 /// The maximum size a line can be in an HTTP message.
 /// A line is any data that is terminated by a CRLF, e.g. a header.
@@ -13,7 +14,7 @@ const MAX_LINE_LENGTH: u64 = 512;
 const MAX_HEADERS_LENGTH: u64 = 4096;
 
 /// The maximum allowed length of a request or response body that can be parsed.
-const MAX_BODY_LENGTH: u64 = 1024 * 1024; // one megabyte
+const MAX_BODY_LENGTH: u64 = 3 * 1024 * 1024; // 3 megabytes
 
 /// Reads the first line, headers, and body of any HTTP request or response.
 /// If a content length cannot be determined and read_if_no_content_length is true, then the
@@ -40,7 +41,7 @@ fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
 
 /// Reads a message body from the reader using the given headers.
 fn read_body(reader: &mut impl BufRead, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
-    let mut reader = reader.take(MAX_BODY_LENGTH);
+    let mut reader = reader.error_take(MAX_BODY_LENGTH);
 
     if let Some(body_length) = get_content_length(headers) {
         read_body_with_length(&mut reader, body_length?)
@@ -105,7 +106,7 @@ fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
 /// The CRLF is not included in the returned string.
 fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     let mut line = String::new();
-    reader.take(MAX_LINE_LENGTH).read_line(&mut line)?;
+    reader.error_take(MAX_LINE_LENGTH).read_line(&mut line)?;
 
     if line.is_empty() {
         return Err(ParsingError::UnexpectedEOF);
@@ -120,7 +121,7 @@ fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
 
 /// Reads and parses headers from the given reader.
 fn read_headers(reader: &mut impl BufRead) -> Result<HeaderMap, ParsingError> {
-    let mut reader = reader.take(MAX_HEADERS_LENGTH);
+    let mut reader = reader.error_take(MAX_HEADERS_LENGTH);
 
     let mut headers = header_map![];
 
@@ -154,10 +155,16 @@ mod tests {
     use crate::common::parse::common::read_message;
     use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading, UnexpectedEOF};
     use crate::common::parse::error::ParsingError;
-    use crate::util::mock::MockReader;
+    use crate::util::mock::{EndlessMockReader, MockReader};
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
-        let reader = MockReader::from(input);
+        let reader = MockReader::new(input);
+        let mut reader = BufReader::new(reader);
+        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
+    }
+
+    fn test_read_message_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+        let reader = EndlessMockReader::new(data, endless_data);
         let mut reader = BufReader::new(reader);
         assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
     }
@@ -672,7 +679,7 @@ mod tests {
             9fj asodijv osdivj osidvja psijf pasidjf pas\r\n\
             content-length: 5\r\n\r\nhello"],
             false,
-            Err(BadSyntax),
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
     }
 
@@ -690,7 +697,58 @@ mod tests {
             3JFHVL AIJFHVL AILIHiuh waiufh iefuhapergiu hapergiu hapeirug haeriug hsperg ",
                  "\r\n\r\n"],
             false,
-            Err(BadSyntax),
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
+    }
+
+    #[test]
+    fn endless_line() {
+        test_read_message_endless(
+            vec![],
+            "blah",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        )
+    }
+
+    #[test]
+    fn endless_headers() {
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "random: blah\r\n",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "random: blahh\r\n",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "random: blahhhh\r\n",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "a: a\r\n",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+    }
+
+    #[test]
+    fn endless_body() {
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n\r\n"],
+            "blah",
+            true,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        )
     }
 }

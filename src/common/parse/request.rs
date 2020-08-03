@@ -53,7 +53,7 @@ mod tests {
     use crate::util::mock::MockReader;
 
     fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
-        let reader = MockReader::from(data);
+        let reader = MockReader::new(data);
         let mut reader = BufReader::new(reader);
         let actual_result = read_request(&mut reader);
         match (expected_result, actual_result) {

@@ -10,3 +10,5 @@ mod response;
 /// Parsing errors.
 pub mod error;
 
+/// Utility for limiting the number of bytes that can be read from a reader.
+mod error_take;
