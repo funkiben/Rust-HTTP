@@ -116,14 +116,10 @@ fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
         return Err(Error::from(ErrorKind::UnexpectedEof).into());
     }
 
-    // pop the \r\n off the end of the line
-    line.pop();
-
-    // make sure the second to last character is '\r' after popping '\n'
-    let last = line.pop();
-    match last {
-        Some('\r') => Ok(line),
-        _ => Err(ParsingError::BadSyntax),
+    // pop the last two characters off and verify they're CRLF
+    match (line.pop(), line.pop()) {
+        (Some('\n'), Some('\r')) => Ok(line),
+        _ => Err(ParsingError::BadSyntax)
     }
 }
 
