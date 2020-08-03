@@ -4,9 +4,8 @@ use std::io::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use my_http::common::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMapOps};
+use my_http::common::{header, status};
 use my_http::common::response::Response;
-use my_http::common::status;
 use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
@@ -24,7 +23,7 @@ fn main() -> Result<(), Error> {
         let message = b"You found the secret message!";
         SendResponse(Response {
             status: status::OK,
-            headers: header_map![(CONTENT_LENGTH, "29")],
+            headers: header_map![(header::CONTENT_LENGTH, "29")],
             body: message.to_vec(),
         })
     });
@@ -53,7 +52,6 @@ fn file_router(directory: &'static str) -> Router {
         let response = cache.entry(path.clone()).or_insert_with(|| Arc::new(file_response(&path)));
 
         SendResponseArc(Arc::clone(&response))
-        // SendResponse(file_response(&path))
     });
 
     router
@@ -61,24 +59,27 @@ fn file_router(directory: &'static str) -> Router {
 
 fn file_response(file_path: &str) -> Response {
     if let Ok(contents) = fs::read(file_path) {
-        let mut headers = header_map![(CONTENT_LENGTH, contents.len().to_string())];
-
-        if let Some(content_type) = get_content_type(file_path) {
-            headers.add_header(CONTENT_TYPE, String::from(content_type));
-        }
+        let headers = header_map![
+            (header::CONTENT_LENGTH, contents.len().to_string()),
+            (header::CONTENT_TYPE, get_content_type(file_path))
+        ];
 
         return Response { status: status::OK, headers, body: contents };
     }
     return Response::from_status(status::NOT_FOUND);
 }
 
-fn get_content_type(path: &str) -> Option<&'static str> {
+fn get_content_type(path: &str) -> &'static str {
     if path.ends_with(".ico") {
-        return Some("image/x-icon");
+        return "image/x-icon";
     } else if path.ends_with(".js") {
-        return Some("application/javascript");
+        return "application/javascript";
     } else if path.ends_with(".svg") {
-        return Some("image/svg+xml");
+        return "image/svg+xml";
+    } else if path.ends_with(".html") {
+        return "text/html"
+    } else if path.ends_with(".css") {
+        return "text/css"
     }
-    None
+    "text/plain"
 }
