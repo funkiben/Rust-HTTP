@@ -6,8 +6,8 @@ use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
-use crate::common::parse::read_request;
 use crate::common::parse::error::{ParsingError, RequestParsingError};
+use crate::common::parse::read_request;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::tls_stream::TlsStream;

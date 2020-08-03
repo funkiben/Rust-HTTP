@@ -1,4 +1,4 @@
-use std::io::{Read, ErrorKind, BufRead};
+use std::io::{BufRead, ErrorKind, Read};
 
 /// Provides a method like take, but instead throws an error when the limit is reached.
 pub trait ErrorTake<T> {

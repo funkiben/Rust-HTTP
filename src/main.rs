@@ -77,9 +77,9 @@ fn get_content_type(path: &str) -> &'static str {
     } else if path.ends_with(".svg") {
         return "image/svg+xml";
     } else if path.ends_with(".html") {
-        return "text/html"
+        return "text/html";
     } else if path.ends_with(".css") {
-        return "text/css"
+        return "text/css";
     }
     "text/plain"
 }
