@@ -203,7 +203,7 @@ mod tests {
     fn gibberish_with_newline() {
         test_read_response(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
-            Err(UnexpectedEOF.into()),
+            Err(BadSyntax.into()),
         );
     }
 

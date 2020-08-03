@@ -1,13 +1,19 @@
-use std::collections::HashMap;
 use std::io::{BufRead, Read};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 use crate::common::parse::error::ParsingError;
+use crate::header_map;
 
 /// The maximum size a line can be in an HTTP message.
 /// A line is any data that is terminated by a CRLF, e.g. a header.
 /// Without this limit, a connection may be kept open indefinitely if no new lines are sent.
 const MAX_LINE_LENGTH: u64 = 512;
+
+/// The maximum allowed length of all the headers in a request or response that can be parsed.
+const MAX_HEADERS_LENGTH: u64 = 4096;
+
+/// The maximum allowed length of a request or response body that can be parsed.
+const MAX_BODY_LENGTH: u64 = 1024 * 1024; // one megabyte
 
 /// Reads the first line, headers, and body of any HTTP request or response.
 /// If a content length cannot be determined and read_if_no_content_length is true, then the
@@ -17,7 +23,7 @@ const MAX_LINE_LENGTH: u64 = 512;
 /// Returns a tuple of the first line of the request, the headers, and the body of the message.
 pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
     let first_line = read_first_line(reader)?;
-    let headers = parse_headers(read_lines_until_empty_line(reader)?)?;
+    let headers = read_headers(reader)?;
     let body = read_body(reader, &headers, read_if_no_content_length)?;
 
     Ok((first_line, headers, body))
@@ -34,12 +40,14 @@ fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
 
 /// Reads a message body from the reader using the given headers.
 fn read_body(reader: &mut impl BufRead, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
+    let mut reader = reader.take(MAX_BODY_LENGTH);
+
     if let Some(body_length) = get_content_length(headers) {
-        read_body_with_length(reader, body_length?)
+        read_body_with_length(&mut reader, body_length?)
     } else if is_chunked_transfer_encoding(headers) {
-        read_chunked_body(reader)
+        read_chunked_body(&mut reader)
     } else if read_if_no_content_length {
-        read_body_to_end(reader)
+        read_body_to_end(&mut reader)
     } else {
         Ok(Vec::new())
     }
@@ -110,30 +118,22 @@ fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     Ok(line)
 }
 
-/// Reads lines from the buffered reader. The returned lines do not include a CRLF.
-fn read_lines_until_empty_line(reader: &mut impl BufRead) -> Result<Vec<String>, ParsingError> {
-    let mut lines = Vec::new();
+/// Reads and parses headers from the given reader.
+fn read_headers(reader: &mut impl BufRead) -> Result<HeaderMap, ParsingError> {
+    let mut reader = reader.take(MAX_HEADERS_LENGTH);
+
+    let mut headers = header_map![];
 
     loop {
-        let line = read_line(reader)?;
+        let line = read_line(&mut reader)?;
 
         if line.is_empty() {
-            return Ok(lines);
+            return Ok(headers);
         }
 
-        lines.push(line);
-    }
-}
-
-/// Tries to parse the given lines as headers.
-/// Each line is parsed with the format "V: K" where V is the header name and K is the header value.
-fn parse_headers(lines: Vec<String>) -> Result<HeaderMap, ParsingError> {
-    let mut headers = HashMap::new();
-    for line in lines {
         let (header, value) = parse_header(line)?;
         headers.add_header(header, value);
     }
-    Ok(headers)
 }
 
 /// Parses the given line as a header. Splits the line at the first ": " pattern.
@@ -276,7 +276,7 @@ mod tests {
         test_read_message(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             false,
-            Err(UnexpectedEOF.into()),
+            Err(BadSyntax.into()),
         );
     }
 

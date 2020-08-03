@@ -150,6 +150,7 @@ standard_headers! {
 /// ```
 #[macro_export]
 macro_rules! header_map {
+    () => { crate::common::header::HeaderMap::new() };
     ($(($header:expr, $value:expr)),+ $(,)?) => {
         <$crate::common::header::HeaderMap as $crate::common::header::HeaderMapOps>::from_pairs(vec![
             $(($header.into(), $value.into()),)+
@@ -244,12 +245,17 @@ mod tests {
     }
 
     #[test]
-    fn predefined_header_from_str() {
+    fn header_map_macro_empty_header_map() {
+        assert!(header_map![].is_empty());
+    }
+
+    #[test]
+    fn header_map_macro_predefined_header_from_str() {
         assert_eq!(CONNECTION, Header::from("ConnEctiOn"));
     }
 
     #[test]
-    fn custom_header_from_str() {
+    fn header_map_macro_custom_header_from_str() {
         assert_eq!(Header::Custom("custom-header".to_string()), Header::from("Custom-Header"));
     }
 
