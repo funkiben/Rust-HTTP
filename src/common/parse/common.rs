@@ -746,7 +746,7 @@ mod tests {
     fn endless_body() {
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
-            "blah",
+            "blah blah blah",
             true,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         )
