@@ -155,7 +155,7 @@ fn infinite_headers() {
 
     let mut client = TcpStream::connect("localhost:7878").unwrap();
 
-    client.write(b"GET / HTTP/1.1\r\n");
+    client.write(b"GET / HTTP/1.1\r\n").unwrap();
 
     loop {
         if let Err(_) = client.write(b"random: value\r\n") {
@@ -187,7 +187,7 @@ fn infinite_header_value() {
 
     let mut client = TcpStream::connect("localhost:7878").unwrap();
 
-    client.write(b"GET / HTTP/1.1\r\nheader: ");
+    client.write(b"GET / HTTP/1.1\r\nheader: ").unwrap();
 
     loop {
         if let Err(_) = client.write(b"blah\r\n") {

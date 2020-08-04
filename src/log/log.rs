@@ -3,14 +3,14 @@ use std::mem;
 use std::sync::{Arc, Once};
 
 #[derive(Clone)]
-pub struct GlobalLogger {
+struct GlobalLogger {
     inner: Option<Arc<dyn Logger>>
 }
 
 impl Logger for GlobalLogger {
-    fn log(&self, status: LogStatus, args: Arguments<'_>) {
+    fn log(&self, level: LogLevel, args: Arguments<'_>) {
         if let Some(ref logger) = self.inner {
-            logger.log(status, args)
+            logger.log(level, args)
         }
     }
 }
@@ -30,7 +30,7 @@ pub fn set_global(logger: impl Logger + 'static) {
     }
 }
 
-pub fn global() -> GlobalLogger {
+pub fn global() -> impl Logger {
     unsafe {
         if GLOBAL_LOGGER.is_null() {
             GlobalLogger { inner: None }
@@ -73,7 +73,7 @@ macro_rules! error {
 }
 
 #[derive(std::fmt::Debug, Copy, Clone, PartialEq, Eq)]
-pub enum LogStatus {
+pub enum LogLevel {
     Debug,
     Info,
     Warn,
@@ -81,22 +81,22 @@ pub enum LogStatus {
 }
 
 pub trait Logger: Sync + Send {
-    fn log(&self, status: LogStatus, args: Arguments<'_>);
+    fn log(&self, level: LogLevel, args: Arguments<'_>);
 
     fn debug(&self, args: Arguments<'_>) {
-        self.log(LogStatus::Debug, args)
+        self.log(LogLevel::Debug, args)
     }
 
     fn info(&self, args: Arguments<'_>) {
-        self.log(LogStatus::Info, args)
+        self.log(LogLevel::Info, args)
     }
 
     fn warn(&self, args: Arguments<'_>) {
-        self.log(LogStatus::Warn, args)
+        self.log(LogLevel::Warn, args)
     }
 
     fn error(&self, args: Arguments<'_>) {
-        self.log(LogStatus::Error, args)
+        self.log(LogLevel::Error, args)
     }
 }
 
@@ -107,15 +107,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::thread::spawn;
 
-    use crate::log::{global, Logger, LogStatus, set_global};
+    use crate::log::{global, Logger, LogLevel, set_global};
 
     struct MockLogger {
-        calls: Arc<Mutex<Vec<(LogStatus, String)>>>
+        calls: Arc<Mutex<Vec<(LogLevel, String)>>>
     }
 
     impl Logger for MockLogger {
-        fn log(&self, status: LogStatus, args: Arguments<'_>) {
-            self.calls.lock().unwrap().push((status, format!("{}", args)))
+        fn log(&self, level: LogLevel, args: Arguments<'_>) {
+            self.calls.lock().unwrap().push((level, format!("{}", args)))
         }
     }
 
@@ -148,36 +148,33 @@ mod tests {
         }
 
         assert_eq!(
-            &vec![(LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Warn, "hello 2".to_string()),
-                  (LogStatus::Error, "hello 3".to_string()),
-                  (LogStatus::Debug, "hello 4".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string()),
-                  (LogStatus::Info, "hello".to_string())],
+            &vec![(LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Warn, "hello 2".to_string()),
+                  (LogLevel::Error, "hello 3".to_string()),
+                  (LogLevel::Debug, "hello 4".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string()),
+                  (LogLevel::Info, "hello".to_string())],
             calls.lock().unwrap().deref());
-    }
 
-    #[test]
-    fn debug_macro() {
-        let calls = Arc::new(Mutex::new(vec![]));
-        set_global(MockLogger { calls: Arc::clone(&calls) });
+        calls.lock().unwrap().clear();
         debug!("hello {} {} {}", 1, 2, 3);
         info!("hello {} {} {}", 1, 2, 3);
         warn!("hello {} {} {}", 1, 2, 3);
         error!("hello {} {} {}", 1, 2, 3);
         assert_eq!(
-            &vec![(LogStatus::Debug, "hello 1 2 3".to_string()),
-                  (LogStatus::Info, "hello 1 2 3".to_string()),
-                  (LogStatus::Warn, "hello 1 2 3".to_string()),
-                  (LogStatus::Error, "hello 1 2 3".to_string())],
+            &vec![(LogLevel::Debug, "hello 1 2 3".to_string()),
+                  (LogLevel::Info, "hello 1 2 3".to_string()),
+                  (LogLevel::Warn, "hello 1 2 3".to_string()),
+                  (LogLevel::Error, "hello 1 2 3".to_string())],
             calls.lock().unwrap().deref());
+
     }
 }
