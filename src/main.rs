@@ -66,7 +66,7 @@ fn file_response(file_path: &str) -> Response {
 
         return Response { status: status::OK, headers, body: contents };
     }
-    return Response::from_status(status::NOT_FOUND);
+    return status::NOT_FOUND.into();
 }
 
 fn get_content_type(path: &str) -> &'static str {

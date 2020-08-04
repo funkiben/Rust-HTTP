@@ -12,9 +12,9 @@ pub struct Response {
     pub body: Vec<u8>,
 }
 
-impl Response {
+impl From<Status> for Response {
     /// Creates an empty response with the given status.
-    pub fn from_status(status: Status) -> Self {
+    fn from(status: Status) -> Self {
         Response {
             status,
             headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, String::from("0"))]),
