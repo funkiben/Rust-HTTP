@@ -17,6 +17,8 @@ impl Logger for GlobalLogger {
 
 static mut GLOBAL_LOGGER: *const GlobalLogger = 0 as *const GlobalLogger;
 
+/// Sets the global logger instance that's returned by global().
+/// Can only be called once.
 pub fn set_global(logger: impl Logger + 'static) {
     static ONCE: Once = Once::new();
 
@@ -30,6 +32,8 @@ pub fn set_global(logger: impl Logger + 'static) {
     }
 }
 
+/// Returns the global logger instance.
+/// If no global logger has been set, then a logger that logs nothing will be returned.
 pub fn global() -> impl Logger {
     unsafe {
         if GLOBAL_LOGGER.is_null() {
@@ -40,6 +44,7 @@ pub fn global() -> impl Logger {
     }
 }
 
+/// Logs debug to the global logger.
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => {
@@ -48,6 +53,7 @@ macro_rules! debug {
     }
 }
 
+/// Logs info to the global logger.
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
@@ -56,6 +62,7 @@ macro_rules! info {
     }
 }
 
+/// Logs warn to the global logger.
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)*) => {
@@ -64,6 +71,7 @@ macro_rules! warn {
     }
 }
 
+/// Logs error to the global logger.
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
@@ -72,6 +80,7 @@ macro_rules! error {
     }
 }
 
+/// Log levels. Different log levels can be disabled with features.
 #[derive(std::fmt::Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LogLevel {
     Debug,
@@ -80,7 +89,8 @@ pub enum LogLevel {
     Error,
 }
 
-pub trait Logger: Sync + Send {
+/// A logger for logging messages with certain levels.
+pub trait Logger {
     fn log(&self, level: LogLevel, args: Arguments<'_>);
 
     fn debug(&self, args: Arguments<'_>) {
