@@ -21,7 +21,7 @@ fn multiple_concurrent_connections_with_many_requests() {
         addr: "localhost:7878",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
-        tls_config: None
+        tls_config: None,
     });
 
     let request1 = Request {
@@ -69,20 +69,16 @@ fn multiple_concurrent_connections_with_many_requests() {
 
     spawn(move || server.start());
 
-    sleep(Duration::from_millis(50));
+    sleep(Duration::from_millis(1000));
 
     let mut handlers = vec![];
-    for _ in 0..11 {
+    for _ in 0..13 {
         handlers.push(spawn(|| {
+
             let mut client = TcpStream::connect("localhost:7878").unwrap();
 
-            let mut iterations = 0;
-            let max_iterations = 11;
-
-            loop {
+            for i in 0..11 {
                 client.write(b"GET / HTTP/1.1\r\n\r\n").unwrap();
-
-                client.flush().unwrap();
 
                 let mut actual = [0u8; 19];
                 if let Err(_) = client.read_exact(&mut actual) {
@@ -93,7 +89,6 @@ fn multiple_concurrent_connections_with_many_requests() {
                 assert_eq!(String::from_utf8_lossy(&actual), String::from_utf8_lossy(b"HTTP/1.1 200 OK\r\n\r\n"));
 
                 client.write(b"GET /foo HTTP/1.1\r\ncontent-length: 5\r\ncustom-header: custom header value\r\n\r\nhello").unwrap();
-                client.flush().unwrap();
 
                 let mut actual = [0u8; 85];
                 client.read(&mut actual).unwrap();
@@ -101,13 +96,9 @@ fn multiple_concurrent_connections_with_many_requests() {
                 assert!(String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncustom-header-2: custom header value 2\r\ncontent-length: 7\r\n\r\nwelcome")
                     || String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncontent-length: 7\r\ncustom-header-2: custom header value 2\r\n\r\nwelcome"));
 
-                iterations += 1;
-
-                if iterations >= max_iterations {
-                    break;
+                if i < 14 {
+                    sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
                 }
-
-                sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
             }
         }));
     }
@@ -115,4 +106,162 @@ fn multiple_concurrent_connections_with_many_requests() {
     for handler in handlers {
         handler.join().unwrap()
     }
+}
+
+#[test]
+fn infinite_connection() {
+    let server = Server::new(Config {
+        addr: "localhost:7878",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7878").unwrap();
+
+    loop {
+        if let Err(_) = client.write(b"blah") {
+            break;
+        }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
+}
+
+#[test]
+fn infinite_headers() {
+    let server = Server::new(Config {
+        addr: "localhost:7878",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7878").unwrap();
+
+    client.write(b"GET / HTTP/1.1\r\n");
+
+    loop {
+        if let Err(_) = client.write(b"random: value\r\n") {
+            break;
+        }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
+}
+
+#[test]
+fn infinite_header_value() {
+    let server = Server::new(Config {
+        addr: "localhost:7878",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7878").unwrap();
+
+    client.write(b"GET / HTTP/1.1\r\nheader: ");
+
+    loop {
+        if let Err(_) = client.write(b"blah\r\n") {
+            break;
+        }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
+}
+
+#[test]
+fn infinite_chunked_body() {
+    let server = Server::new(Config {
+        addr: "localhost:7878",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7878").unwrap();
+
+    client.write(b"GET / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n").unwrap();
+
+    loop {
+        if let Err(_) = client.write(b"5\r\nhello\r\n") {
+            break;
+        }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
+}
+
+#[test]
+fn insanely_huge_body() {
+    let server = Server::new(Config {
+        addr: "localhost:7878",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7878").unwrap();
+
+    client.write(b"GET / HTTP/1.1\r\ncontent-length: 99999999\r\n\r\n").unwrap();
+
+    loop {
+        if let Err(_) = client.write(b"blah") {
+            break;
+        }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
