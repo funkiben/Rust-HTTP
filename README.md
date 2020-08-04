@@ -1,2 +1,2 @@
 # Rust-HTTP
-Simple HTTP/HTTPS library written in Rust using blocking IO.
+Minimal dependency HTTP/HTTPS library for Rust.
