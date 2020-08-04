@@ -4,6 +4,8 @@ pub mod common;
 pub mod server;
 /// Components for communicating with an HTTP server.
 pub mod client;
+/// Component for logging.
+pub mod log;
 
 /// Utility components.
 pub(crate) mod util;

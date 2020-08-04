@@ -4,7 +4,14 @@ version = "0.1.0"
 authors = ["funkiben <funkiben@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["log-debug", "log-info", "log-warn", "log-error"]
+no-debug-logs = ["log-info", "log-warn", "log-error"]
+warn-and-error-logs-only = ["log-warn", "log-error"]
+log-debug = []
+log-info = []
+log-warn = []
+log-error = []
 
 [dependencies]
 rustls = "0.18.0"
