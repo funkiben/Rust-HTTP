@@ -4,14 +4,6 @@ version = "0.1.0"
 authors = ["funkiben <funkiben@gmail.com>"]
 edition = "2018"
 
-[features]
-default = ["log-debug", "log-info", "log-warn", "log-error"]
-no-debug-logs = ["log-info", "log-warn", "log-error"]
-warn-and-error-logs-only = ["log-warn", "log-error"]
-log-debug = []
-log-info = []
-log-warn = []
-log-error = []
-
 [dependencies]
 rustls = "0.18.0"
+log = "0.4.11"
