@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::BufReader;
+use std::io::{BufReader, Write, Read};
 use std::process::Command;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
@@ -12,11 +12,12 @@ use my_http::common::status;
 use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::SendResponse;
+use std::net::TcpStream;
 
 #[test]
 fn curl_request() {
     let mut server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:8000",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(10000),
         tls_config: Some(get_tsl_config()),
@@ -36,7 +37,7 @@ fn curl_request() {
 
     let output = Command::new("curl")
         .arg("-k")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
+        .arg("--request").arg("GET").arg("https://localhost:8000")
         .output().unwrap();
 
     assert_eq!("i work", String::from_utf8_lossy(&output.stdout));
@@ -45,7 +46,7 @@ fn curl_request() {
 #[test]
 fn curl_multiple_requests_same_connection() {
     let mut server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:8001",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(10000),
         tls_config: Some(get_tsl_config()),
@@ -65,12 +66,12 @@ fn curl_multiple_requests_same_connection() {
 
     let output = Command::new("curl")
         .arg("-k")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
-        .arg("--request").arg("GET").arg("https://localhost:7878")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
+        .arg("--request").arg("GET").arg("https://localhost:8001")
         .output().unwrap();
 
     assert_eq!("i worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
@@ -79,7 +80,7 @@ fn curl_multiple_requests_same_connection() {
 #[test]
 fn curl_multiple_concurrent_requests() {
     let mut server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:8002",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(10000),
         tls_config: Some(get_tsl_config()),
@@ -102,14 +103,14 @@ fn curl_multiple_concurrent_requests() {
         handlers.push(spawn(|| {
             let output = Command::new("curl")
                 .arg("-k")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
-                .arg("--request").arg("GET").arg("https://localhost:7878")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
+                .arg("--request").arg("GET").arg("https://localhost:8002")
                 .output().unwrap();
             assert_eq!("i worki worki worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
         }));
@@ -118,6 +119,51 @@ fn curl_multiple_concurrent_requests() {
     for handler in handlers {
         handler.join().unwrap();
     }
+}
+
+#[test]
+fn infinite_connection() {
+    let server = Server::new(Config {
+        addr: "localhost:8003",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: Some(get_tsl_config()),
+    });
+
+    spawn(|| server.start());
+
+    sleep(Duration::from_millis(1000));
+
+    let mut client = TcpStream::connect("localhost:8003").unwrap();
+
+    loop {
+        if let Err(_) = client.write_all(b"blahblahblah") {
+            break;
+        }
+    }
+}
+
+#[test]
+fn normal_http_message() {
+    let server = Server::new(Config {
+        addr: "localhost:8004",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(1000),
+        tls_config: Some(get_tsl_config()),
+    });
+
+    spawn(|| server.start());
+
+    sleep(Duration::from_millis(1000));
+
+    let mut client = TcpStream::connect("localhost:8004").unwrap();
+
+    client.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+
+    let mut response = String::new();
+
+    client.read_to_string(&mut response).unwrap();
+
 }
 
 fn get_tsl_config() -> ServerConfig {

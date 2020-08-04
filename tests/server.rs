@@ -18,7 +18,7 @@ use my_http::server::Server;
 #[test]
 fn multiple_concurrent_connections_with_many_requests() {
     let mut server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7000",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -75,15 +75,17 @@ fn multiple_concurrent_connections_with_many_requests() {
     for _ in 0..13 {
         handlers.push(spawn(|| {
 
-            let mut client = TcpStream::connect("localhost:7878").unwrap();
+            let mut client = TcpStream::connect("localhost:7000").unwrap();
 
             for i in 0..11 {
-                client.write(b"GET / HTTP/1.1\r\n\r\n").unwrap();
-
                 let mut actual = [0u8; 19];
-                if let Err(_) = client.read_exact(&mut actual) {
-                    client = TcpStream::connect("localhost:7878").unwrap();
-                    continue;
+                loop {
+                    client.write(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+                    if let Err(_) = client.read_exact(&mut actual) {
+                        client = TcpStream::connect("localhost:7000").unwrap();
+                        continue;
+                    }
+                    break;
                 }
 
                 assert_eq!(String::from_utf8_lossy(&actual), String::from_utf8_lossy(b"HTTP/1.1 200 OK\r\n\r\n"));
@@ -111,7 +113,7 @@ fn multiple_concurrent_connections_with_many_requests() {
 #[test]
 fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7001",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -123,7 +125,7 @@ fn infinite_connection() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7878").unwrap();
+    let mut client = TcpStream::connect("localhost:7001").unwrap();
 
     loop {
         if let Err(_) = client.write(b"blah") {
@@ -141,7 +143,7 @@ fn infinite_connection() {
 #[test]
 fn infinite_headers() {
     let server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7002",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -153,7 +155,7 @@ fn infinite_headers() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7878").unwrap();
+    let mut client = TcpStream::connect("localhost:7002").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\n").unwrap();
 
@@ -173,7 +175,7 @@ fn infinite_headers() {
 #[test]
 fn infinite_header_value() {
     let server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7003",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -185,7 +187,7 @@ fn infinite_header_value() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7878").unwrap();
+    let mut client = TcpStream::connect("localhost:7003").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\nheader: ").unwrap();
 
@@ -205,7 +207,7 @@ fn infinite_header_value() {
 #[test]
 fn infinite_chunked_body() {
     let server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7004",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -217,7 +219,7 @@ fn infinite_chunked_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7878").unwrap();
+    let mut client = TcpStream::connect("localhost:7004").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n").unwrap();
 
@@ -237,7 +239,7 @@ fn infinite_chunked_body() {
 #[test]
 fn insanely_huge_body() {
     let server = Server::new(Config {
-        addr: "localhost:7878",
+        addr: "localhost:7005",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -249,7 +251,7 @@ fn insanely_huge_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7878").unwrap();
+    let mut client = TcpStream::connect("localhost:7005").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ncontent-length: 99999999\r\n\r\n").unwrap();
 
