@@ -49,17 +49,15 @@ impl Server {
 
         let server = Arc::new(self);
 
-        listener.incoming()
-            .filter_map(|stream| {
-                stream.map_err(|error| {
-                    println!("Error unwrapping new connection: {}", error);
-                    error
-                }).ok()
-            })
-            .for_each(|stream| {
-                let server = Arc::clone(&server);
-                thread_pool.execute(move || server.handle_connection(stream))
-            });
+        for stream in listener.incoming() {
+            match stream {
+                Err(error) => println!("Error unwrapping new connection: {}", error),
+                Ok(stream) => {
+                    let server = Arc::clone(&server);
+                    thread_pool.execute(move || server.handle_connection(stream))
+                }
+            }
+        }
 
         Ok(())
     }
