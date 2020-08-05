@@ -159,7 +159,7 @@ impl FromStr for DateTime {
             return Err(DateTimeError::StringLength);
         }
 
-        // check if delimeters are the same
+        // check if delimiters are the same
         if &date.chars().nth(4).unwrap_or('a') != &date.chars().nth(7).unwrap_or('b') {
             return Err(DateTimeError::InconsistentDelimiter);
         }
