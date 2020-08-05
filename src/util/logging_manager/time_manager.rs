@@ -61,6 +61,8 @@ impl DateTime {
         format!("{:04}_{:02}_{:02}", self.year, self.month, self.day)
     }
 
+    // TODO break into smaller functions
+    // TODO pull literals out into constants
     // create a datetime struct from a unix time
     fn from_unix(epoch_diff: u64) -> DateTime {
         // calculate difference from Jan 1, 2020 00:00
@@ -148,6 +150,8 @@ impl DateTime {
 impl FromStr for DateTime {
     type Err = DateTimeError;
 
+    // TODO break into smaller functions if possible
+    // TODO pull literals out into constants
     // parse DateTime from string in format YYYY_MM_DD
     fn from_str(date: &str) -> Result<Self, Self::Err> {
         // check length
@@ -189,8 +193,10 @@ impl FromStr for DateTime {
     }
 }
 
+// TODO why does this need to be in a utils module?
 mod utils {
 
+    // TODO pull these out and make constants
     // get an array of day counts for a month in the given year
     pub fn get_month_calendar(year: u16) -> [u64; 12] {
         // check for leap year
@@ -205,6 +211,8 @@ mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TODO add test for time before Jan 1 2020
 
     #[test]
     fn test_from_unix_format() {
@@ -249,6 +257,7 @@ mod tests {
         assert_eq!("2020_03_01", DateTime::from_unix(1583020800).format_date());
     }
 
+    // TODO might be good to have a test case for the empty string
     #[test]
     fn test_check_date() {
         assert_eq!(true, check_date(curr_datestamp().as_str()));

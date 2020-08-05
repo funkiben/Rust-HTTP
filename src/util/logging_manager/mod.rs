@@ -19,6 +19,7 @@ pub struct LoggingConfig {
     pub max_dir_size: usize,
 }
 
+// TODO impl Drop so that the thread gets killed when the LoggingService is dropped
 impl LoggingService {
     /// Create a new LoggingService instance holding the sender to the dedicated logging thread.
     ///
@@ -32,6 +33,7 @@ impl LoggingService {
         // kick off logging thread
         thread::spawn(move || loop {
             let message: String = receiver.recv().unwrap();
+            // TODO we should use an enum (maybe Option) instead of having a special "kill_logging" message that stops the thread
             if message == "kill_logging" {
                 break;
             }
@@ -85,6 +87,7 @@ fn log(message: &str, options: &LoggingConfig) -> Result<(), Error> {
     file.write_all((time_manager::curr_timestamp() + " " + message + "\n").as_bytes())
 }
 
+// TODO break this function down into smaller functions so we can unit test it better
 // checks the size of the directory, deleting oldest files if too big
 fn check_size(options: &LoggingConfig) -> Result<(), Error> {
     // files to be sorted
@@ -112,6 +115,8 @@ fn check_size(options: &LoggingConfig) -> Result<(), Error> {
     // sort files by date
     files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
+    // TODO what if the size for today's log file exceeds max_dir_size
+
     // check size of each file
     let mut total_size: usize = 0;
     let mut start_index: usize = 0;
@@ -137,6 +142,8 @@ mod tests {
     use std::io::Result;
     use std::thread;
     use std::time;
+
+    // TODO lots more tests
 
     #[test]
     fn test_log() -> Result<()> {

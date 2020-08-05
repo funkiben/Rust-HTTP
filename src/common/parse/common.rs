@@ -742,6 +742,27 @@ mod tests {
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "a",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            "a: ",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
+
+        test_read_message_endless(
+            vec!["HTTP/1.1 200 OK\r\n"],
+            ": ",
+            false,
+            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+        );
     }
 
     #[test]
