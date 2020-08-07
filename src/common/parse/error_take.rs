@@ -1,12 +1,15 @@
-use std::io::{BufRead, ErrorKind, Read};
+use std::task::Context;
+
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, Error, ErrorKind, Result, Take};
+use tokio::macros::support::{Pin, Poll};
 
 /// Provides a method like take, but instead throws an error when the limit is reached.
-pub trait ErrorTake<T> {
+pub trait ErrorTake {
     /// Like take, but will return an error as soon as the read limit if reached.
-    fn error_take(self, limit: u64) -> CustomTake<T>;
+    fn error_take(self, limit: u64) -> CustomTake<Self> where Self: Sized;
 }
 
-impl<T: Read> ErrorTake<T> for T {
+impl<T: AsyncReadExt> ErrorTake for T {
     fn error_take(self, limit: u64) -> CustomTake<T> {
         CustomTake::new(self.take(limit))
     }
@@ -14,37 +17,44 @@ impl<T: Read> ErrorTake<T> for T {
 
 /// Like Take, but will return an error when the limit is reached.
 /// The standard Take returns Ok(0) when the limit is reached.
-pub struct CustomTake<T>(std::io::Take<T>);
+pub struct CustomTake<T>(Take<T>);
 
-impl<T> CustomTake<T> {
+impl<'a, T: AsyncRead> CustomTake<T> {
     /// Creates a new custom take using an inner take.
-    fn new(inner: std::io::Take<T>) -> CustomTake<T> {
+    fn new(inner: Take<T>) -> CustomTake<T> {
         CustomTake(inner)
     }
 
     /// Checks if the take limit has been reached. If so, returns an error.
     fn check_limit(&self) -> std::io::Result<()> {
         match self.0.limit() {
-            0 => Err(std::io::Error::new(ErrorKind::Other, "read limit reached")),
+            0 => Err(Error::new(ErrorKind::Other, "read limit reached")),
             _ => Ok(())
         }
     }
 }
 
-impl<T: Read> Read for CustomTake<T> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.check_limit()?;
-        self.0.read(buf)
+impl<T: AsyncRead + Unpin> AsyncRead for CustomTake<T> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize>> {
+        if let Err(err) = self.check_limit() {
+            Poll::Ready(Err(err))
+        } else {
+            Pin::new(&mut self.0).poll_read(cx, buf)
+        }
     }
 }
 
-impl<T: BufRead> BufRead for CustomTake<T> {
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        self.check_limit()?;
-        self.0.fill_buf()
+impl<T: AsyncBufRead + Unpin> AsyncBufRead for CustomTake<T> {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
+        if let Err(err) = self.check_limit() {
+            Poll::Ready(Err(err))
+        } else {
+            let this = self.get_mut();
+            Pin::new(&mut this.0).poll_fill_buf(cx)
+        }
     }
 
-    fn consume(&mut self, amt: usize) {
-        self.0.consume(amt);
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        Pin::new(&mut self.0).consume(amt)
     }
 }

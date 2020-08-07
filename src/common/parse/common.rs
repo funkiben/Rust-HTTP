@@ -1,4 +1,6 @@
-use std::io::{BufRead, Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind};
+
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 use crate::common::parse::error::ParsingError;
@@ -22,10 +24,10 @@ const MAX_BODY_LENGTH: u64 = 3 * 1024 * 1024; // 3 megabytes
 /// the reader signals EOF). If it's false then no more data will be read after the headers, and the
 /// body will be empty.
 /// Returns a tuple of the first line of the request, the headers, and the body of the message.
-pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
-    let first_line = read_first_line(reader)?;
-    let headers = read_headers(reader)?;
-    let body = read_body(reader, &headers, read_if_no_content_length)?;
+pub async fn read_message(reader: &mut (impl AsyncBufReadExt + Unpin), read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
+    let first_line = read_first_line(reader).await?;
+    let headers = read_headers(reader).await?;
+    let body = read_body(reader, &headers, read_if_no_content_length).await?;
 
     Ok((first_line, headers, body))
 }
@@ -33,8 +35,8 @@ pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) 
 /// Reads the first line of a message.
 /// Maps UnexpectedEOF errors to EOF errors because EOF's are expected here.
 /// An EOF found when reading the first line of a message means the connection has closed and nothing else will be transmitted.
-fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
-    read_line(reader).map_err(|err|
+async fn read_first_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<String, ParsingError> {
+    read_line(reader).await.map_err(|err|
         match err {
             ParsingError::Reading(err) if err.kind() == ErrorKind::UnexpectedEof => ParsingError::EOF,
             x => x
@@ -43,15 +45,15 @@ fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
 }
 
 /// Reads a message body from the reader using the given headers.
-fn read_body(reader: &mut impl BufRead, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
+async fn read_body(reader: &mut (impl AsyncBufReadExt + Unpin), headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
     let mut reader = reader.error_take(MAX_BODY_LENGTH);
 
     if let Some(body_length) = get_content_length(headers) {
-        read_body_with_length(&mut reader, body_length?)
+        read_body_with_length(&mut reader, body_length?).await
     } else if is_chunked_transfer_encoding(headers) {
-        read_chunked_body(&mut reader)
+        read_chunked_body(&mut reader).await
     } else if read_if_no_content_length {
-        read_body_to_end(&mut reader)
+        read_body_to_end(&mut reader).await
     } else {
         Ok(Vec::new())
     }
@@ -70,25 +72,25 @@ fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
 }
 
 /// Reads a message body from the reader with a defined length.
-fn read_body_with_length(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, ParsingError> {
+async fn read_body_with_length(reader: &mut (impl AsyncBufReadExt + Unpin), body_length: usize) -> Result<Vec<u8>, ParsingError> {
     let mut buf = vec![0; body_length];
-    reader.read_exact(&mut buf)?;
+    reader.read_exact(&mut buf).await?;
     Ok(buf)
 }
 
 /// Reads a chunked body from the reader.
-fn read_chunked_body(reader: &mut impl BufRead) -> Result<Vec<u8>, ParsingError> {
+async fn read_chunked_body(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<Vec<u8>, ParsingError> {
     let mut body = vec![];
     loop {
-        let line = read_line(reader)?;
+        let line = read_line(reader).await?;
         let size = usize::from_str_radix(&line, 16).map_err(|_| ParsingError::InvalidChunkSize)?;
 
         let mut buf = vec![0; size];
-        reader.read_exact(&mut buf)?;
+        reader.read_exact(&mut buf).await?;
         body.append(&mut buf);
 
         // get rid of crlf
-        read_line(reader)?;
+        read_line(reader).await?;
 
         if size == 0 {
             break;
@@ -99,18 +101,20 @@ fn read_chunked_body(reader: &mut impl BufRead) -> Result<Vec<u8>, ParsingError>
 }
 
 /// Reads a message body from the reader. Reads until there's nothing left to read from.
-fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
+async fn read_body_to_end(reader: &mut (impl AsyncReadExt + Unpin)) -> Result<Vec<u8>, ParsingError> {
     let mut buf = vec![];
-    reader.read_to_end(&mut buf)?;
+    reader.read_to_end(&mut buf).await?;
     Ok(buf)
 }
 
 /// Reads a single line, assuming the line ends in a CRLF ("\r\n").
 /// The CRLF is not included in the returned string.
 /// If the line is empty and contains no CRLF, then a BadSyntax error is returned
-fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
+async fn read_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<String, ParsingError> {
+    let mut reader = reader.error_take(MAX_LINE_LENGTH);
+
     let mut line = String::new();
-    reader.error_take(MAX_LINE_LENGTH).read_line(&mut line)?;
+    reader.read_line(&mut line).await?;
 
     if line.is_empty() {
         return Err(Error::from(ErrorKind::UnexpectedEof).into());
@@ -124,13 +128,13 @@ fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
 }
 
 /// Reads and parses headers from the given reader.
-fn read_headers(reader: &mut impl BufRead) -> Result<HeaderMap, ParsingError> {
+async fn read_headers(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<HeaderMap, ParsingError> {
     let mut reader = reader.error_take(MAX_HEADERS_LENGTH);
 
     let mut headers = header_map![];
 
     loop {
-        let line = read_line(&mut reader)?;
+        let line = read_line(&mut reader).await?;
 
         if line.is_empty() {
             return Ok(headers);
@@ -153,7 +157,7 @@ fn parse_header(raw: String) -> Result<(Header, String), ParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use tokio::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::common::parse::common::read_message;
@@ -161,64 +165,64 @@ mod tests {
     use crate::common::parse::error::ParsingError;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
-    fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+    async fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::new(input);
         let mut reader = BufReader::new(reader);
-        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
+        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length).await), format!("{:?}", expected_output));
     }
 
-    fn test_read_message_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+    async fn test_read_message_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = EndlessMockReader::new(data, endless_data);
         let mut reader = BufReader::new(reader);
-        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
+        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length).await), format!("{:?}", expected_output));
     }
 
-    #[test]
-    fn no_headers_or_body() {
+    #[tokio::test]
+    async fn no_headers_or_body() {
         test_read_message(
             vec!["blah blah blah\r\n\r\n"],
             false,
             Ok(("blah blah blah".to_string(),
                 Default::default(),
                 vec![])),
-        );
+        ).await;
     }
 
-    #[test]
-    fn headers_and_body() {
+    #[tokio::test]
+    async fn headers_and_body() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn headers_and_body_fragmented() {
+    #[tokio::test]
+    async fn headers_and_body_fragmented() {
         test_read_message(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn only_one_message_returned() {
+    #[tokio::test]
+    async fn only_one_message_returned() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 "hello".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn big_body() {
+    #[tokio::test]
+    async fn big_body() {
         let body = b"iuwrhgiuelrguihwleriughwleiruhglweiurhgliwerg fkwfowjeofjiwoefijwef \
         wergiuwehrgiuwehilrguwehlrgiuw fewfwferg wenrjg; weirng lwieurhg owieurhg oeiuwrhg oewirg er\
         gweuirghweiurhgleiwurhglwieurhglweiurhglewiurhto8w374yto8374yt9p18234u50982@#$%#$%^&%^*(^)&(\
@@ -237,71 +241,71 @@ mod tests {
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
                 body.to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn read_if_no_content_length_true() {
+    #[tokio::test]
+    async fn read_if_no_content_length_true() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             true,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 Default::default(),
                 "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn read_if_no_content_length_false() {
+    #[tokio::test]
+    async fn read_if_no_content_length_false() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 Default::default(),
                 vec![])),
-        );
+        ).await;
     }
 
-    #[test]
-    fn custom_header() {
+    #[tokio::test]
+    async fn custom_header() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
                 vec![])),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish() {
+    #[tokio::test]
+    async fn gibberish() {
         test_read_message(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_newline() {
+    #[tokio::test]
+    async fn gibberish_with_newline() {
         test_read_message(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             false,
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_crlf() {
+    #[tokio::test]
+    async fn gibberish_with_crlf() {
         test_read_message(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_crlfs_at_end() {
+    #[tokio::test]
+    async fn gibberish_with_crlfs_at_end() {
         test_read_message(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
@@ -310,123 +314,123 @@ mod tests {
                 Default::default(),
                 vec![]
             )),
-        );
+        ).await;
     }
 
-    #[test]
-    fn all_newlines() {
+    #[tokio::test]
+    async fn all_newlines() {
         test_read_message(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn all_crlfs() {
+    #[tokio::test]
+    async fn all_crlfs() {
         test_read_message(
             vec!["\r\n\r\n\r\n\r\n"],
             false,
             Ok(("".to_string(), Default::default(), vec![])),
-        );
+        ).await;
     }
 
-    #[test]
-    fn missing_crlfs() {
+    #[tokio::test]
+    async fn missing_crlfs() {
         test_read_message(
             vec!["HTTP/1.1 200 OK"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn only_one_crlf() {
+    #[tokio::test]
+    async fn only_one_crlf() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn bad_header() {
+    #[tokio::test]
+    async fn bad_header() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn bad_content_length_value() {
+    #[tokio::test]
+    async fn bad_content_length_value() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
             false,
             Err(InvalidHeaderValue),
-        );
+        ).await;
     }
 
-    #[test]
-    fn no_data() {
+    #[tokio::test]
+    async fn no_data() {
         test_read_message(
             vec![],
             false,
             Err(EOF),
-        );
+        ).await;
     }
 
-    #[test]
-    fn one_character() {
+    #[tokio::test]
+    async fn one_character() {
         test_read_message(
             vec!["a"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn one_crlf_nothing_else() {
+    #[tokio::test]
+    async fn one_crlf_nothing_else() {
         test_read_message(
             vec!["\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_long() {
+    #[tokio::test]
+    async fn content_length_too_long() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
-        );
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "early eof"))),
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_long_with_request_after() {
+    #[tokio::test]
+    async fn content_length_too_long_with_request_after() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
                 "helloHT".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_short() {
+    #[tokio::test]
+    async fn content_length_too_short() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
                 "hel".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body() {
+    #[tokio::test]
+    async fn chunked_body() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
@@ -441,11 +445,11 @@ mod tests {
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 "hello world hello".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_no_termination() {
+    #[tokio::test]
+    async fn chunked_body_no_termination() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
@@ -456,11 +460,11 @@ mod tests {
                  "llo\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_chunk_size_1_byte_too_large() {
+    #[tokio::test]
+    async fn chunked_body_chunk_size_1_byte_too_large() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "3\r\n",
@@ -473,11 +477,11 @@ mod tests {
                  "\r\n"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_chunk_size_2_bytes_too_large() {
+    #[tokio::test]
+    async fn chunked_body_chunk_size_2_bytes_too_large() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "4\r\n",
@@ -490,11 +494,11 @@ mod tests {
                  "\r\n"],
             false,
             Err(InvalidChunkSize),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_chunk_size_many_bytes_too_large() {
+    #[tokio::test]
+    async fn chunked_body_chunk_size_many_bytes_too_large() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "13\r\n",
@@ -509,11 +513,11 @@ mod tests {
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 "he\r\nc\r\nllo world hello".as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_huge_chunk_size() {
+    #[tokio::test]
+    async fn chunked_body_huge_chunk_size() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "100\r\n",
@@ -525,12 +529,12 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
-        );
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "early eof"))),
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_chunk_size_not_hex_digit() {
+    #[tokio::test]
+    async fn chunked_body_chunk_size_not_hex_digit() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "z\r\n",
@@ -543,33 +547,33 @@ mod tests {
                  "\r\n"],
             false,
             Err(InvalidChunkSize),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_no_crlfs() {
+    #[tokio::test]
+    async fn chunked_body_no_crlfs() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "zhelloiouf jwiufji ejif jef"],
             false,
             Err(BadSyntax),
-        );
+        ).await;
     }
 
 
-    #[test]
-    fn chunked_body_no_content() {
+    #[tokio::test]
+    async fn chunked_body_no_content() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "9\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
-        );
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "early eof"))),
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_no_trailing_crlf() {
+    #[tokio::test]
+    async fn chunked_body_no_trailing_crlf() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
@@ -581,22 +585,22 @@ mod tests {
                  "0\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_only_chunk_size() {
+    #[tokio::test]
+    async fn chunked_body_only_chunk_size() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
                  "he"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn empty_chunked_body() {
+    #[tokio::test]
+    async fn empty_chunked_body() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "0\r\n",
@@ -605,11 +609,11 @@ mod tests {
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 vec![])),
-        );
+        ).await;
     }
 
-    #[test]
-    fn chunked_body_huge_chunk() {
+    #[tokio::test]
+    async fn chunked_body_huge_chunk() {
         let chunk = "eofjaiweughlwauehgliw uehfwaiuefhpqiwuefh lwieufh wle234532\
                  57rgoi jgoai\"\"\"woirjgowiejfiuf hawlieuf halweifu hawef awef \
                  weFIU HW iefu\t\r\n\r\nhweif uhweifuh qefq234523 812u9405834205 \
@@ -664,11 +668,11 @@ mod tests {
             Ok(("HTTP/1.1 200 OK".to_string(),
                 HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
                 chunk.as_bytes().to_vec())),
-        );
+        ).await;
     }
 
-    #[test]
-    fn huge_first_line() {
+    #[tokio::test]
+    async fn huge_first_line() {
         test_read_message(
             vec!["HTTP/1.1 200 OKroig jseorgi jpseoriegj seorigj epoirgj epsigrj paweorgj aeo\
             6rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
@@ -682,11 +686,11 @@ mod tests {
             content-length: 5\r\n\r\nhello"],
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn huge_header() {
+    #[tokio::test]
+    async fn huge_header() {
         test_read_message(
             vec!["HTTP/1.1 200 OK\r\n",
                  "big-header: iowjfo iawjeofiajw pefiawjpefoi hwjpeiUF HWPIU4FHPAIWUHGPAIWUHGP AIWUHGRP \
@@ -700,78 +704,78 @@ mod tests {
                  "\r\n\r\n"],
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn endless_line() {
+    #[tokio::test]
+    async fn endless_line() {
         test_read_message_endless(
             vec![],
             "blah",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        )
+        ).await;
     }
 
-    #[test]
-    fn endless_headers() {
+    #[tokio::test]
+    async fn endless_headers() {
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blah\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahh\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahhhh\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: a\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: ",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
 
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             ": ",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        );
+        ).await;
     }
 
-    #[test]
-    fn endless_body() {
+    #[tokio::test]
+    async fn endless_body() {
         test_read_message_endless(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             "blah blah blah",
             true,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
-        )
+        ).await;
     }
 }

@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use tokio::io::AsyncBufReadExt;
 
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
@@ -8,8 +8,8 @@ use crate::common::request::Request;
 
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
-pub fn read_request(reader: &mut impl BufRead) -> Result<Request, RequestParsingError> {
-    let (first_line, headers, body) = read_message(reader, false)?;
+pub async fn read_request(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<Request, RequestParsingError> {
+    let (first_line, headers, body) = read_message(reader, false).await?;
 
     let (method, uri, http_version) = parse_first_line(&first_line)?;
 
@@ -40,7 +40,7 @@ fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use tokio::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
@@ -52,23 +52,23 @@ mod tests {
     use crate::header_map;
     use crate::util::mock::MockReader;
 
-    fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
+    async fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
         let reader = MockReader::new(data);
         let mut reader = BufReader::new(reader);
-        let actual_result = read_request(&mut reader);
+        let actual_result = read_request(&mut reader).await;
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))
         }
     }
 
-    #[test]
-    fn no_data() {
-        test_read_request(vec![], Err(EOF.into()));
+    #[tokio::test]
+    async fn no_data() {
+        test_read_request(vec![], Err(EOF.into())).await;
     }
 
-    #[test]
-    fn no_header_or_body() {
+    #[tokio::test]
+    async fn no_header_or_body() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\n\r\n"],
             Ok(Request {
@@ -76,11 +76,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn no_header_or_body_fragmented() {
+    #[tokio::test]
+    async fn no_header_or_body_fragmented() {
         test_read_request(
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
             Ok(Request {
@@ -88,11 +88,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn interesting_uri() {
+    #[tokio::test]
+    async fn interesting_uri() {
         test_read_request(
             vec!["GET /hello/world/ HTTP/1.1\r\n\r\n"],
             Ok(Request {
@@ -100,11 +100,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn weird_uri() {
+    #[tokio::test]
+    async fn weird_uri() {
         test_read_request(
             vec!["GET !#%$#/-+=_$+[]{}\\%&$ HTTP/1.1\r\n\r\n"],
             Ok(Request {
@@ -112,11 +112,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn many_spaces_in_first_line() {
+    #[tokio::test]
+    async fn many_spaces_in_first_line() {
         test_read_request(
             vec!["GET /hello/world/ HTTP/1.1 hello there blah blah\r\n\r\n"],
             Ok(Request {
@@ -124,11 +124,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn only_reads_one_request() {
+    #[tokio::test]
+    async fn only_reads_one_request() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             Ok(Request {
@@ -136,11 +136,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn headers() {
+    #[tokio::test]
+    async fn headers() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\nconnection: close\r\nsomething: hello there goodbye\r\n\r\n"],
             Ok(Request {
@@ -152,11 +152,11 @@ mod tests {
                     ("something", "hello there goodbye"),
                 ],
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn repeated_headers() {
+    #[tokio::test]
+    async fn repeated_headers() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
             Ok(Request {
@@ -169,11 +169,11 @@ mod tests {
                     ("something", "value 2"),
                 ],
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn headers_weird_case() {
+    #[tokio::test]
+    async fn headers_weird_case() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
             Ok(Request {
@@ -185,11 +185,11 @@ mod tests {
                     ("something", "hello there goodbye"),
                 ],
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn headers_only_colon_and_space() {
+    #[tokio::test]
+    async fn headers_only_colon_and_space() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
             Ok(Request {
@@ -200,11 +200,11 @@ mod tests {
                     ("", ""),
                 ],
                 body: vec![],
-            }))
+            })).await
     }
 
-    #[test]
-    fn body_with_content_length() {
+    #[tokio::test]
+    async fn body_with_content_length() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello"],
             Ok(Request {
@@ -214,11 +214,11 @@ mod tests {
                     (CONTENT_LENGTH, "5"),
                 ],
                 body: b"hello".to_vec(),
-            }))
+            })).await
     }
 
-    #[test]
-    fn body_fragmented() {
+    #[tokio::test]
+    async fn body_fragmented() {
         test_read_request(
             vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
             Ok(Request {
@@ -228,11 +228,11 @@ mod tests {
                     (CONTENT_LENGTH, "5"),
                 ],
                 body: b"hello".to_vec(),
-            }))
+            })).await
     }
 
-    #[test]
-    fn two_requests_with_bodies() {
+    #[tokio::test]
+    async fn two_requests_with_bodies() {
         test_read_request(
             vec![
                 "GET /body1 HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello",
@@ -247,11 +247,11 @@ mod tests {
                     ],
                     body: b"hello".to_vec(),
                 }),
-        )
+        ).await
     }
 
-    #[test]
-    fn large_body() {
+    #[tokio::test]
+    async fn large_body() {
         let body = b"ergiergjhlisuehrlgisuehrlgisuehrlgiushelrgiushelriguheisurhgl ise\
         uhrg laiuwe````hrg ;aoiwhg aw4tyg 8o3w74go 8w475g\no 8w475hgo 8w475hgo 84w75hgo 8w347hfo g83qw7h4go\
          q837hgp 9q384h~~~gp 9qw\r\n385hgp q9384htpq9 38\r\nwuhf iwourehafgliweurhglaieruhgq9w348gh q9384ufhq\
@@ -275,11 +275,11 @@ mod tests {
                     (CONTENT_LENGTH, "1131"),
                 ],
                 body: body.to_vec(),
-            }))
+            })).await
     }
 
-    #[test]
-    fn header_multiple_colons() {
+    #[tokio::test]
+    async fn header_multiple_colons() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\nhello: value: foo\r\n\r\n"],
             Ok(Request {
@@ -289,102 +289,102 @@ mod tests {
                     ("hello", "value: foo")
                 ],
                 body: vec![],
-            }));
+            })).await;
     }
 
-    #[test]
-    fn gibberish() {
+    #[tokio::test]
+    async fn gibberish() {
         test_read_request(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn no_requests_read_after_bad_request() {
+    #[tokio::test]
+    async fn no_requests_read_after_bad_request() {
         test_read_request(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn lots_of_newlines() {
+    #[tokio::test]
+    async fn lots_of_newlines() {
         test_read_request(
             vec!["\n\n\n\n\n", "\n\n\n", "\n\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn no_newlines() {
+    #[tokio::test]
+    async fn no_newlines() {
         test_read_request(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn invalid_method() {
+    #[tokio::test]
+    async fn invalid_method() {
         test_read_request(
             vec!["yadadada / HTTP/1.1\r\n\r\n"],
-            Err(UnrecognizedMethod("yadadada".to_string())))
+            Err(UnrecognizedMethod("yadadada".to_string()))).await
     }
 
-    #[test]
-    fn wrong_http_version() {
+    #[tokio::test]
+    async fn wrong_http_version() {
         test_read_request(
             vec!["GET / HTTP/1.0\r\n\r\n"],
-            Err(WrongHttpVersion.into()))
+            Err(WrongHttpVersion.into())).await
     }
 
-    #[test]
-    fn missing_uri_and_version() {
+    #[tokio::test]
+    async fn missing_uri_and_version() {
         test_read_request(
             vec!["GET\r\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn missing_http_version() {
+    #[tokio::test]
+    async fn missing_http_version() {
         test_read_request(
             vec!["GET /\r\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn bad_crlf() {
+    #[tokio::test]
+    async fn bad_crlf() {
         test_read_request(
             vec!["GET / HTTP/1.1\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn bad_header() {
+    #[tokio::test]
+    async fn bad_header() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\nyadadada\r\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn header_with_newline() {
+    #[tokio::test]
+    async fn header_with_newline() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\niwjfw\r\n\r\n"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn missing_crlf_after_last_header() {
+    #[tokio::test]
+    async fn missing_crlf_after_last_header() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into())).await
     }
 
-    #[test]
-    fn missing_crlfs() {
+    #[tokio::test]
+    async fn missing_crlfs() {
         test_read_request(
             vec!["GET / HTTP/1.1"],
-            Err(BadSyntax.into()))
+            Err(BadSyntax.into())).await
     }
 
-    #[test]
-    fn body_no_content_length() {
+    #[tokio::test]
+    async fn body_no_content_length() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\n\r\nhello"],
             Ok(
@@ -393,11 +393,11 @@ mod tests {
                     method: Method::GET,
                     headers: HeaderMap::new(),
                     body: vec![],
-                }))
+                })).await
     }
 
-    #[test]
-    fn body_too_short_content_length() {
+    #[tokio::test]
+    async fn body_too_short_content_length() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 3\r\n\r\nhello"],
             Ok(Request {
@@ -405,18 +405,18 @@ mod tests {
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "3")],
                 body: b"hel".to_vec(),
-            }))
+            })).await
     }
 
-    #[test]
-    fn body_content_length_too_long() {
+    #[tokio::test]
+    async fn body_content_length_too_long() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")).into()))
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "early eof")).into())).await
     }
 
-    #[test]
-    fn body_content_length_too_long_request_after() {
+    #[tokio::test]
+    async fn body_content_length_too_long_request_after() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello",
                  "GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
@@ -425,18 +425,18 @@ mod tests {
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "10")],
                 body: b"helloGET /".to_vec(),
-            }))
+            })).await
     }
 
-    #[test]
-    fn negative_content_length() {
+    #[tokio::test]
+    async fn negative_content_length() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
-            Err(InvalidHeaderValue.into()));
+            Err(InvalidHeaderValue.into())).await;
     }
 
-    #[test]
-    fn request_with_0_content_length() {
+    #[tokio::test]
+    async fn request_with_0_content_length() {
         test_read_request(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\nhello"],
             Ok(Request {
@@ -444,6 +444,6 @@ mod tests {
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "0")],
                 body: vec![],
-            }))
+            })).await
     }
 }

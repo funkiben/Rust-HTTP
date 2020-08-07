@@ -15,12 +15,10 @@ use my_http::server::Config;
 use my_http::server::ListenerResult::SendResponse;
 use my_http::server::Server;
 
-#[test]
-fn multiple_concurrent_connections_with_many_requests() {
+#[tokio::test(threaded_scheduler)]
+async fn multiple_concurrent_connections_with_many_requests() {
     let mut server = Server::new(Config {
-        addr: "localhost:7000",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7000".parse().unwrap(),
         tls_config: None,
     });
 
@@ -67,14 +65,13 @@ fn multiple_concurrent_connections_with_many_requests() {
         })
     });
 
-    spawn(move || server.start());
+    tokio::spawn(async { server.start().await.unwrap() });
 
     sleep(Duration::from_millis(1000));
 
     let mut handlers = vec![];
     for _ in 0..13 {
         handlers.push(spawn(|| {
-
             let mut client = TcpStream::connect("localhost:7000").unwrap();
 
             for i in 0..11 {
@@ -110,17 +107,15 @@ fn multiple_concurrent_connections_with_many_requests() {
     }
 }
 
-#[test]
-fn infinite_connection() {
+#[tokio::test(threaded_scheduler)]
+async fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:7001",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7001".parse().unwrap(),
         tls_config: None,
     });
 
-    spawn(|| {
-        server.start().unwrap();
+    tokio::spawn(async {
+        server.start().await.unwrap();
     });
 
     sleep(Duration::from_millis(500));
@@ -140,17 +135,15 @@ fn infinite_connection() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-#[test]
-fn infinite_headers() {
+#[tokio::test(threaded_scheduler)]
+async fn infinite_headers() {
     let server = Server::new(Config {
-        addr: "localhost:7002",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7002".parse().unwrap(),
         tls_config: None,
     });
 
-    spawn(|| {
-        server.start().unwrap();
+    tokio::spawn(async {
+        server.start().await.unwrap();
     });
 
     sleep(Duration::from_millis(500));
@@ -172,17 +165,15 @@ fn infinite_headers() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-#[test]
-fn infinite_header_value() {
+#[tokio::test(threaded_scheduler)]
+async fn infinite_header_value() {
     let server = Server::new(Config {
-        addr: "localhost:7003",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7003".parse().unwrap(),
         tls_config: None,
     });
 
-    spawn(|| {
-        server.start().unwrap();
+    tokio::spawn(async {
+        server.start().await.unwrap();
     });
 
     sleep(Duration::from_millis(500));
@@ -204,17 +195,15 @@ fn infinite_header_value() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-#[test]
-fn infinite_chunked_body() {
+#[tokio::test(threaded_scheduler)]
+async fn infinite_chunked_body() {
     let server = Server::new(Config {
-        addr: "localhost:7004",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7004".parse().unwrap(),
         tls_config: None,
     });
 
-    spawn(|| {
-        server.start().unwrap();
+    tokio::spawn(async {
+        server.start().await.unwrap();
     });
 
     sleep(Duration::from_millis(500));
@@ -236,17 +225,15 @@ fn infinite_chunked_body() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-#[test]
-fn insanely_huge_body() {
+#[tokio::test(threaded_scheduler)]
+async fn insanely_huge_body() {
     let server = Server::new(Config {
-        addr: "localhost:7005",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:7005".parse().unwrap(),
         tls_config: None,
     });
 
-    spawn(|| {
-        server.start().unwrap();
+    tokio::spawn(async {
+        server.start().await.unwrap();
     });
 
     sleep(Duration::from_millis(500));

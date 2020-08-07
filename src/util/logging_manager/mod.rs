@@ -1,10 +1,10 @@
-mod time_manager;
-
-use std::fs::{create_dir, read_dir, remove_file, DirEntry, OpenOptions};
+use std::fs::{create_dir, DirEntry, OpenOptions, read_dir, remove_file};
 use std::io::{Error, Write};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
+
+mod time_manager;
 
 /// Struct holding sender to dedicated logging thread
 pub struct LoggingService {
@@ -137,13 +137,14 @@ fn check_size(options: &LoggingConfig) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs::remove_dir_all;
     use std::io::Result;
     use std::thread;
     use std::time;
 
-    // TODO lots more tests
+    use super::*;
+
+// TODO lots more tests
 
     #[test]
     fn test_log() -> Result<()> {
@@ -164,9 +165,9 @@ mod tests {
                     logging_directory.to_str().unwrap(),
                     current_date
                 )
-                .as_str()
+                    .as_str()
             )
-            .exists()
+                .exists()
         );
         remove_dir_all(logging_directory)?;
         assert_eq!(false, logging_directory.exists());

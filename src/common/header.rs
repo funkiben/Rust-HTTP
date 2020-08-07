@@ -11,6 +11,15 @@ pub enum Header {
     Custom(String),
 }
 
+impl Header {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Standard(s) => s,
+            Custom(s) => s
+        }
+    }
+}
+
 impl Display for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

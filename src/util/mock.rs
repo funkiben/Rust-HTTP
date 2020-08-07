@@ -1,5 +1,9 @@
 use std::cmp::min;
 use std::io::{Read, Write};
+use std::task::Context;
+
+use tokio::io::{AsyncRead, AsyncWrite, Error};
+use tokio::macros::support::{Pin, Poll};
 
 pub struct MockReader {
     data: Vec<Vec<u8>>
@@ -31,6 +35,12 @@ impl Read for MockReader {
     }
 }
 
+impl AsyncRead for MockReader {
+    fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(self.get_mut().read(buf))
+    }
+}
+
 pub struct EndlessMockReader {
     finite_reader: MockReader,
     sequence: Vec<u8>,
@@ -58,6 +68,12 @@ impl Read for EndlessMockReader {
     }
 }
 
+impl AsyncRead for EndlessMockReader {
+    fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(self.get_mut().read(buf))
+    }
+}
+
 pub struct MockWriter {
     pub written: Vec<Vec<u8>>,
     pub flushed: Vec<Vec<u8>>,
@@ -78,6 +94,20 @@ impl Write for MockWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         self.flushed.append(&mut self.written);
         Ok(())
+    }
+}
+
+impl AsyncWrite for MockWriter {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+        Poll::Ready(self.get_mut().write(buf))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(self.get_mut().flush())
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 

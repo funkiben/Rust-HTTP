@@ -195,7 +195,6 @@ impl FromStr for DateTime {
 
 // TODO why does this need to be in a utils module?
 mod utils {
-
     // TODO pull these out and make constants
     // get an array of day counts for a month in the given year
     pub fn get_month_calendar(year: u16) -> [u64; 12] {
@@ -212,7 +211,7 @@ mod utils {
 mod tests {
     use super::*;
 
-    // TODO add test for time before Jan 1 2020
+// TODO add test for time before Jan 1 2020
 
     #[test]
     fn test_from_unix_format() {

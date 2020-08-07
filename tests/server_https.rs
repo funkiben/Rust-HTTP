@@ -1,10 +1,12 @@
 use std::fs;
-use std::io::{BufReader, Write, Read};
+use std::io::{BufReader, Read, Write};
+use std::net::TcpStream;
 use std::process::Command;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
+use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
+use tokio_rustls::rustls;
 
 use my_http::common::header::CONTENT_LENGTH;
 use my_http::common::response::Response;
@@ -12,14 +14,11 @@ use my_http::common::status;
 use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::SendResponse;
-use std::net::TcpStream;
 
-#[test]
-fn curl_request() {
+#[tokio::test(threaded_scheduler)]
+async fn curl_request() {
     let mut server = Server::new(Config {
-        addr: "localhost:8000",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        addr: "127.0.0.1:8000".parse().unwrap(),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -31,24 +30,24 @@ fn curl_request() {
         })
     });
 
-    spawn(|| server.start());
+    tokio::spawn(async {
+        server.start().await.unwrap();
+    });
 
     sleep(Duration::from_millis(1000));
 
     let output = Command::new("curl")
         .arg("-k")
-        .arg("--request").arg("GET").arg("https://localhost:8000")
+        .arg("--request").arg("GET").arg("https://127.0.0.1:8000")
         .output().unwrap();
 
     assert_eq!("i work", String::from_utf8_lossy(&output.stdout));
 }
 
-#[test]
-fn curl_multiple_requests_same_connection() {
+#[tokio::test(threaded_scheduler)]
+async fn curl_multiple_requests_same_connection() {
     let mut server = Server::new(Config {
-        addr: "localhost:8001",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        addr: "127.0.0.1:8001".parse().unwrap(),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -60,7 +59,9 @@ fn curl_multiple_requests_same_connection() {
         })
     });
 
-    spawn(|| server.start());
+    tokio::spawn(async {
+        server.start().await.unwrap();
+    });
 
     sleep(Duration::from_millis(1000));
 
@@ -77,12 +78,10 @@ fn curl_multiple_requests_same_connection() {
     assert_eq!("i worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
 }
 
-#[test]
-fn curl_multiple_concurrent_requests() {
+#[tokio::test(threaded_scheduler)]
+async fn curl_multiple_concurrent_requests() {
     let mut server = Server::new(Config {
-        addr: "localhost:8002",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        addr: "127.0.0.1:8002".parse().unwrap(),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -94,7 +93,9 @@ fn curl_multiple_concurrent_requests() {
         })
     });
 
-    spawn(|| server.start());
+    tokio::spawn(async {
+        server.start().await.unwrap();
+    });
 
     sleep(Duration::from_millis(1000));
 
@@ -121,16 +122,16 @@ fn curl_multiple_concurrent_requests() {
     }
 }
 
-#[test]
-fn infinite_connection() {
+#[tokio::test(threaded_scheduler)]
+async fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:8003",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
+        addr: "127.0.0.1:8003".parse().unwrap(),
         tls_config: Some(get_tsl_config()),
     });
 
-    spawn(|| server.start());
+    tokio::spawn(async {
+        server.start().await.unwrap();
+    });
 
     sleep(Duration::from_millis(1000));
 
@@ -143,16 +144,16 @@ fn infinite_connection() {
     }
 }
 
-#[test]
-fn normal_http_message() {
+#[tokio::test(threaded_scheduler)]
+async fn normal_http_message() {
     let server = Server::new(Config {
-        addr: "localhost:8004",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(1000),
+        addr: "0.0.0.0:8004".parse().unwrap(),
         tls_config: Some(get_tsl_config()),
     });
 
-    spawn(|| server.start());
+    tokio::spawn(async {
+        server.start().await.unwrap();
+    });
 
     sleep(Duration::from_millis(1000));
 
@@ -163,7 +164,6 @@ fn normal_http_message() {
     let mut response = String::new();
 
     client.read_to_string(&mut response).unwrap();
-
 }
 
 fn get_tsl_config() -> ServerConfig {

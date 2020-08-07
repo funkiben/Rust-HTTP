@@ -1,8 +1,11 @@
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::future::Future;
+use std::ops::DerefMut;
 use std::sync::Arc;
 
-use rustls::{ServerConfig, ServerSession};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter, Error, ErrorKind};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
+use tokio_rustls::TlsAcceptor;
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
@@ -10,11 +13,9 @@ use crate::common::parse::error::{ParsingError, RequestParsingError};
 use crate::common::parse::read_request;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::common::tls_stream::TlsStream;
 use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
-use crate::util::thread_pool::ThreadPool;
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
@@ -26,7 +27,7 @@ pub struct Server {
     /// The router used for handling requests received from connections
     pub router: Router,
     /// The TLS config as an arc.
-    tls_config: Option<Arc<ServerConfig>>,
+    tls_acceptor: Option<TlsAcceptor>,
 }
 
 impl Server {
@@ -35,87 +36,99 @@ impl Server {
         Server {
             config,
             router: Router::new(),
-            tls_config: None,
+            tls_acceptor: None,
         }
     }
 
     /// Starts the HTTP server. This function will block and listen for new connections.
-    pub fn start(mut self) -> std::io::Result<()> {
-        let listener = TcpListener::bind(self.config.addr)?;
+    pub async fn start(mut self) -> tokio::io::Result<()> {
+        let mut listener = TcpListener::bind(self.config.addr).await?;
 
-        let thread_pool = ThreadPool::new(self.config.connection_handler_threads);
-
-        self.tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
+        self.tls_acceptor = self.config.tls_config.take().map(|cfg| TlsAcceptor::from(Arc::new(cfg)));
 
         let server = Arc::new(self);
 
-        for stream in listener.incoming() {
+        loop {
+            let stream = listener.accept().await;
             match stream {
                 Err(error) => println!("Error unwrapping new connection: {}", error),
-                Ok(stream) => {
+                Ok((stream, _)) => {
                     let server = Arc::clone(&server);
-                    thread_pool.execute(move || server.handle_connection(stream))
+                    tokio::spawn(async move {
+                        server.handle_connection(stream).await;
+                    });
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Handles a new connection.
-    fn handle_connection(&self, stream: TcpStream) {
-        stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
-
-        if let Some(ref tls_config) = self.tls_config {
-            self.handle_tls_connection(tls_config, stream);
+    async fn handle_connection(&self, stream: TcpStream) {
+        if let Some(ref tls_acceptor) = self.tls_acceptor {
+            self.handle_tls_connection(tls_acceptor, stream).await;
         } else {
-            self.handle_non_tls_connection(stream);
+            self.handle_non_tls_connection(stream).await;
         }
     }
 
     /// Handles a new connection using plaintext.
-    fn handle_non_tls_connection(&self, stream: TcpStream) {
-        respond_to_requests(&stream, &stream, &self.router);
+    async fn handle_non_tls_connection(&self, stream: TcpStream) {
+        let (reader, writer) = stream.into_split();
+        respond_to_requests(reader, writer, &self.router).await;
     }
 
     /// Handles a new connection using TLS.
-    fn handle_tls_connection(&self, tls_config: &Arc<ServerConfig>, stream: TcpStream) {
-        let stream = TlsStream::new(stream, ServerSession::new(tls_config));
-        respond_to_requests(&stream, &stream, &self.router);
+    async fn handle_tls_connection(&self, tls_acceptor: &TlsAcceptor, stream: TcpStream) {
+        match tls_acceptor.accept(stream).await {
+            Ok(stream) => {
+                let (reader, writer) = tokio::io::split(stream);
+                respond_to_requests(reader, writer, &self.router).await;
+            }
+            Err(err) => {
+                println!("TLS Error: {}", err)
+            }
+        }
     }
 }
 
 /// Uses the given router to respond to requests read from reader. Writes responses to writer.
 /// If the router has no route for a request, then a 404 response with no body is returned.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
-    let mut writer = BufWriter::new(writer);
-
+async fn respond_to_requests<R: AsyncReadExt + Unpin, W: AsyncWriteExt + Unpin>(reader: R, writer: W, router: &Router) {
+    let writer = BufWriter::new(writer);
+    let writer = Arc::new(Mutex::new(writer));
+    // TODO dont use mutex here... :(
     let result = read_requests(reader, |request| {
-        let write_result = write_response_from_router(&mut writer, router, &request);
-        should_close_after_response(&request) || write_result.is_err()
-    });
+        let writer_clone = Arc::clone(&writer);
+        async move {
+            let write_result = write_response_from_router(writer_clone.lock().await.deref_mut(), router, &request).await;
+            should_close_after_response(&request) || write_result.is_err()
+        }
+    }).await;
 
     if let Err(error) = result {
         // we dont really care if the response to an invalid request can't be written
-        write_error_response(&mut writer, error).unwrap_or(());
+        write_error_response(writer.lock().await.deref_mut(), error).await.unwrap_or(());
     }
 }
 
 /// Gets a response from the router and writes. If the router has no response, then writes a 404 response.
-fn write_response_from_router(writer: &mut impl Write, router: &Router, request: &Request) -> std::io::Result<()> {
+async fn write_response_from_router(writer: &mut (impl AsyncWriteExt + Unpin), router: &Router, request: &Request) -> std::io::Result<()> {
     match router.result(&request) {
-        SendResponse(response) => write_response(writer, &response),
-        SendResponseArc(response) => write_response(writer, &response),
-        Next => writer.write_all(NOT_FOUND_RESPONSE).and_then(|_| writer.flush())
+        SendResponse(response) => write_response(writer, &response).await,
+        SendResponseArc(response) => write_response(writer, &response).await,
+        Next => {
+            writer.write_all(NOT_FOUND_RESPONSE).await?;
+            writer.flush().await
+        }
     }
 }
 
 /// Writes a response to the given request parsing error.
-fn write_error_response(writer: &mut impl Write, error: RequestParsingError) -> std::io::Result<()> {
+async fn write_error_response(writer: &mut (impl AsyncWriteExt + Unpin), error: RequestParsingError) -> std::io::Result<()> {
     println!("Error: {:?}", error);
-    writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
-    writer.flush()
+    writer.write_all(REQUEST_PARSING_ERROR_RESPONSE).await?;
+    writer.flush().await
 }
 
 /// Checks if the given connection should be closed after a response is sent to the given request.
@@ -126,13 +139,13 @@ fn should_close_after_response(request: &Request) -> bool {
 /// Reads requests from the given reader until there is an invalid request or the connection is closed.
 /// Calls "on_request" for each request read.
 /// If "on_request" returns true, the function will return with Ok and stop reading future requests.
-fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
+async fn read_requests<T: Future<Output=bool>>(reader: impl AsyncReadExt + Unpin, mut on_request: impl FnMut(Request) -> T) -> Result<(), RequestParsingError> {
     let mut reader = BufReader::new(reader);
     loop {
-        let request = read_request(&mut reader);
+        let request = read_request(&mut reader).await;
 
         match request {
-            Ok(request) => if on_request(request) { return Ok(()); },
+            Ok(request) => if on_request(request).await { return Ok(()); },
             Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
             Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_io_error_ok(error) => return Ok(()),
             err => return err.map(|_| {})
@@ -149,17 +162,27 @@ fn is_io_error_ok(error: &Error) -> bool {
 }
 
 /// Writes the response as bytes to the given writer.
-fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
-    // write! will call write multiple times and does not flush
-    write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
+async fn write_response(writer: &mut (impl AsyncWriteExt + Unpin), response: &Response) -> std::io::Result<()> {
+    writer.write_all(HTTP_VERSION.as_bytes()).await?;
+    writer.write_all(b" ").await?;
+    writer.write_all(response.status.code.to_string().as_bytes()).await?;
+    writer.write_all(b" ").await?;
+    writer.write_all(response.status.reason.as_bytes()).await?;
+    writer.write_all(b"\r\n").await?;
+
     for (header, values) in response.headers.iter() {
         for value in values {
-            write!(writer, "{}: {}\r\n", header, value)?;
+            writer.write_all(header.as_str().as_bytes()).await?;
+            writer.write_all(b": ").await?;
+            writer.write_all(value.as_bytes()).await?;
+            writer.write_all(b"\r\n").await?;
         }
     }
-    writer.write_all(b"\r\n")?;
-    writer.write_all(&response.body)?;
-    writer.flush()?;
+
+    writer.write_all(b"\r\n").await?;
+    writer.write_all(&response.body).await?;
+    writer.flush().await?;
+
     Ok(())
 }
 
@@ -179,7 +202,7 @@ mod tests {
     use crate::server::server::{respond_to_requests, write_response};
     use crate::util::mock::{MockReader, MockWriter};
 
-    fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
+    async fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader::new(input);
 
         let mut writer = MockWriter::new();
@@ -195,7 +218,7 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        respond_to_requests(reader, &mut writer, &router);
+        respond_to_requests(reader, &mut writer, &router).await;
 
         let actual_output = writer.flushed.concat();
         let actual_output = String::from_utf8_lossy(&actual_output);
@@ -204,11 +227,11 @@ mod tests {
         assert_eq!(expected_requests, actual_requests.lock().unwrap().to_vec());
     }
 
-    fn test_respond_to_requests_no_bad(input: Vec<&str>, expected_requests: Vec<Request>) {
-        test_respond_to_requests_with_last_response(input, expected_requests, "");
+    async fn test_respond_to_requests_no_bad(input: Vec<&str>, expected_requests: Vec<Request>) {
+        test_respond_to_requests_with_last_response(input, expected_requests, "").await;
     }
 
-    fn test_respond_to_requests_with_last_response(input: Vec<&str>, expected_requests: Vec<Request>, last_response: &str) {
+    async fn test_respond_to_requests_with_last_response(input: Vec<&str>, expected_requests: Vec<Request>, last_response: &str) {
         let responses: Vec<Response> =
             (0..expected_requests.len())
                 .map(|code| Response {
@@ -217,22 +240,24 @@ mod tests {
                     body: vec![],
                 })
                 .collect();
-        let mut expected_output: String = responses.iter().map(|res| {
-            let mut buf: Vec<u8> = vec![];
-            write_response(&mut buf, res).unwrap();
-            String::from_utf8_lossy(&buf).into_owned()
-        }).collect();
+
+        let mut expected_output: Vec<u8> = vec![];
+        for response in &responses {
+            write_response(&mut expected_output, response).await.unwrap();
+        }
+        let mut expected_output = String::from_utf8_lossy(&expected_output).into_owned();
         expected_output.push_str(last_response);
-        test_respond_to_requests(input, responses, expected_requests, &expected_output);
+
+        test_respond_to_requests(input, responses, expected_requests, &expected_output).await;
     }
 
-    #[test]
-    fn no_data() {
-        test_respond_to_requests(vec![], vec![], vec![], "");
+    #[tokio::test]
+    async fn no_data() {
+        test_respond_to_requests(vec![], vec![], vec![], "").await;
     }
 
-    #[test]
-    fn one_request() {
+    #[tokio::test]
+    async fn one_request() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\n\r\n"],
             vec![Request {
@@ -240,11 +265,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_fragmented() {
+    #[tokio::test]
+    async fn one_request_fragmented() {
         test_respond_to_requests_no_bad(
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
             vec![Request {
@@ -252,11 +277,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_interesting_uri() {
+    #[tokio::test]
+    async fn one_request_interesting_uri() {
         test_respond_to_requests_no_bad(
             vec!["GET /hello/world/ HTTP/1.1\r\n\r\n"],
             vec![Request {
@@ -264,11 +289,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_weird_uri() {
+    #[tokio::test]
+    async fn one_request_weird_uri() {
         test_respond_to_requests_no_bad(
             vec!["GET !#%$#/-+=_$+[]{}\\%&$ HTTP/1.1\r\n\r\n"],
             vec![Request {
@@ -276,11 +301,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_many_spaces_in_first_line() {
+    #[tokio::test]
+    async fn one_request_many_spaces_in_first_line() {
         test_respond_to_requests_no_bad(
             vec!["GET /hello/world/ HTTP/1.1 hello there blah blah\r\n\r\n"],
             vec![Request {
@@ -288,11 +313,11 @@ mod tests {
                 method: Method::GET,
                 headers: HeaderMap::new(),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn two_requests() {
+    #[tokio::test]
+    async fn two_requests() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             vec![
@@ -308,11 +333,11 @@ mod tests {
                     headers: HeaderMap::new(),
                     body: vec![],
                 }
-            ])
+            ]).await
     }
 
-    #[test]
-    fn one_request_with_headers() {
+    #[tokio::test]
+    async fn one_request_with_headers() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\nconnection: close\r\nsomething: hello there goodbye\r\n\r\n"],
             vec![Request {
@@ -324,11 +349,11 @@ mod tests {
                     (Header::Custom(String::from("something")), String::from("hello there goodbye")),
                 ]),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_with_repeated_headers() {
+    #[tokio::test]
+    async fn one_request_with_repeated_headers() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
             vec![Request {
@@ -341,11 +366,11 @@ mod tests {
                     (Header::Custom(String::from("something")), String::from("value 2")),
                 ]),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_with_headers_weird_case() {
+    #[tokio::test]
+    async fn one_request_with_headers_weird_case() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
             vec![Request {
@@ -357,11 +382,11 @@ mod tests {
                     (Header::Custom(String::from("something")), String::from("hello there goodbye")),
                 ]),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_with_headers_only_colon_and_space() {
+    #[tokio::test]
+    async fn one_request_with_headers_only_colon_and_space() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
             vec![Request {
@@ -372,11 +397,11 @@ mod tests {
                     (Header::Custom(String::from("")), String::from("")),
                 ]),
                 body: vec![],
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_with_body() {
+    #[tokio::test]
+    async fn one_request_with_body() {
         let body = b"hello";
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello"],
@@ -387,11 +412,11 @@ mod tests {
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
                 body: body.to_vec(),
-            }])
+            }]).await
     }
 
-    #[test]
-    fn one_request_with_body_fragmented() {
+    #[tokio::test]
+    async fn one_request_with_body_fragmented() {
         let body = b"hello";
         test_respond_to_requests_no_bad(
             vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
@@ -402,11 +427,11 @@ mod tests {
                     (CONTENT_LENGTH, String::from("5")),
                 ]),
                 body: body.to_vec(),
-            }])
+            }]).await
     }
 
-    #[test]
-    fn two_requests_with_bodies() {
+    #[tokio::test]
+    async fn two_requests_with_bodies() {
         let body1 = b"hello";
         let body2 = b"goodbye";
         test_respond_to_requests_no_bad(
@@ -432,11 +457,11 @@ mod tests {
                     body: body2.to_vec(),
                 }
             ],
-        )
+        ).await
     }
 
-    #[test]
-    fn one_request_with_large_body() {
+    #[tokio::test]
+    async fn one_request_with_large_body() {
         let body = b"ergiergjhlisuehrlgisuehrlgisuehrlgiushelrgiushelriguheisurhgl ise\
         uhrg laiuwe````hrg ;aoiwhg aw4tyg 8o3w74go 8w475g\no 8w475hgo 8w475hgo 84w75hgo 8w347hfo g83qw7h4go\
          q837hgp 9q384h~~~gp 9qw\r\n385hgp q9384htpq9 38\r\nwuhf iwourehafgliweurhglaieruhgq9w348gh q9384ufhq\
@@ -460,11 +485,11 @@ mod tests {
                     (CONTENT_LENGTH, String::from("1131")),
                 ]),
                 body: body.to_vec(),
-            }])
+            }]).await
     }
 
-    #[test]
-    fn two_requests_connection_close_header() {
+    #[tokio::test]
+    async fn two_requests_connection_close_header() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\nconnection: close\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             vec![
@@ -474,12 +499,12 @@ mod tests {
                     headers: HeaderMap::from_pairs(vec![(CONNECTION, String::from("close"))]),
                     body: vec![],
                 }
-            ])
+            ]).await
     }
 
 
-    #[test]
-    fn header_with_multiple_colons() {
+    #[tokio::test]
+    async fn header_with_multiple_colons() {
         test_respond_to_requests_no_bad(
             vec!["GET / HTTP/1.1\r\nhello: value: foo\r\n\r\n"],
             vec![
@@ -491,115 +516,115 @@ mod tests {
                     ]),
                     body: vec![],
                 }
-            ]);
+            ]).await;
     }
 
-    #[test]
-    fn bad_request_gibberish() {
+    #[tokio::test]
+    async fn bad_request_gibberish() {
         test_respond_to_requests_with_last_response(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn no_requests_read_after_bad_request() {
+    #[tokio::test]
+    async fn no_requests_read_after_bad_request() {
         test_respond_to_requests_with_last_response(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn bad_request_lots_of_newlines() {
+    #[tokio::test]
+    async fn bad_request_lots_of_newlines() {
         test_respond_to_requests_with_last_response(
             vec!["\n\n\n\n\n", "\n\n\n", "\n\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn bad_request_no_newlines() {
+    #[tokio::test]
+    async fn bad_request_no_newlines() {
         test_respond_to_requests_with_last_response(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn invalid_method() {
+    #[tokio::test]
+    async fn invalid_method() {
         test_respond_to_requests_with_last_response(
             vec!["yadadada / HTTP/1.1\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn wrong_http_version() {
+    #[tokio::test]
+    async fn wrong_http_version() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.0\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn missing_uri_and_version() {
+    #[tokio::test]
+    async fn missing_uri_and_version() {
         test_respond_to_requests_with_last_response(
             vec!["GET\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn missing_http_version() {
+    #[tokio::test]
+    async fn missing_http_version() {
         test_respond_to_requests_with_last_response(
             vec!["GET /\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn bad_crlf() {
+    #[tokio::test]
+    async fn bad_crlf() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn bad_header() {
+    #[tokio::test]
+    async fn bad_header() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\nyadadada\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn header_with_newline() {
+    #[tokio::test]
+    async fn header_with_newline() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\niwjfw\r\n\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn missing_crlf_after_last_header() {
+    #[tokio::test]
+    async fn missing_crlf_after_last_header() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn missing_crlfs() {
+    #[tokio::test]
+    async fn missing_crlfs() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n")
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await
     }
 
-    #[test]
-    fn request_with_body_and_no_content_length() {
+    #[tokio::test]
+    async fn request_with_body_and_no_content_length() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\n\r\nhello"],
             vec![
@@ -610,11 +635,11 @@ mod tests {
                     body: vec![],
                 }
             ],
-            "HTTP/1.1 400 Bad Request\r\n\r\n");
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await;
     }
 
-    #[test]
-    fn request_with_body_and_too_short_content_length() {
+    #[tokio::test]
+    async fn request_with_body_and_too_short_content_length() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\ncontent-length: 3\r\n\r\nhello"],
             vec![
@@ -625,27 +650,27 @@ mod tests {
                     body: b"hel".to_vec(),
                 }
             ],
-            "HTTP/1.1 400 Bad Request\r\n\r\n");
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await;
     }
 
-    #[test]
-    fn request_with_body_and_too_long_content_length() {
+    #[tokio::test]
+    async fn request_with_body_and_too_long_content_length() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n");
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await;
     }
 
-    #[test]
-    fn request_with_negative_content_length() {
+    #[tokio::test]
+    async fn request_with_negative_content_length() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
             vec![],
-            "HTTP/1.1 400 Bad Request\r\n\r\n");
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await;
     }
 
-    #[test]
-    fn request_with_0_content_length() {
+    #[tokio::test]
+    async fn request_with_0_content_length() {
         test_respond_to_requests_with_last_response(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\nhello"],
             vec![
@@ -655,11 +680,11 @@ mod tests {
                     headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, String::from("0"))]),
                     body: vec![],
                 }],
-            "HTTP/1.1 400 Bad Request\r\n\r\n");
+            "HTTP/1.1 400 Bad Request\r\n\r\n").await;
     }
 
-    #[test]
-    fn write_response_with_headers_and_body() {
+    #[tokio::test]
+    async fn write_response_with_headers_and_body() {
         let response = Response {
             status: status::OK,
             headers: HeaderMap::from_pairs(vec![
@@ -671,7 +696,7 @@ mod tests {
 
         let mut writer = MockWriter::new();
 
-        write_response(&mut writer, &response).unwrap();
+        write_response(&mut writer, &response).await.unwrap();
 
         let bytes = writer.flushed.concat();
         let response_bytes_as_string = String::from_utf8_lossy(&bytes);
@@ -682,20 +707,20 @@ mod tests {
         )
     }
 
-    #[test]
-    fn response_no_header_or_body_to_bytes() {
+    #[tokio::test]
+    async fn response_no_header_or_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HashMap::new(),
             body: vec![],
         };
         let mut buf: Vec<u8> = vec![];
-        write_response(&mut buf, &response).unwrap();
+        write_response(&mut buf, &response).await.unwrap();
         assert_eq!(String::from_utf8_lossy(&buf), "HTTP/1.1 200 OK\r\n\r\n")
     }
 
-    #[test]
-    fn response_one_header_no_body_to_bytes() {
+    #[tokio::test]
+    async fn response_one_header_no_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HeaderMap::from_pairs(vec![
@@ -704,7 +729,7 @@ mod tests {
             body: vec![],
         };
         let mut buf: Vec<u8> = vec![];
-        write_response(&mut buf, &response).unwrap();
+        write_response(&mut buf, &response).await.unwrap();
         assert_eq!(String::from_utf8_lossy(&buf), "HTTP/1.1 200 OK\r\ncustom header: header value\r\n\r\n")
     }
 }

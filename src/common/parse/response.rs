@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use tokio::io::AsyncBufReadExt;
 
 use crate::common::HTTP_VERSION;
 use crate::common::parse::common::read_message;
@@ -7,8 +7,8 @@ use crate::common::response::Response;
 use crate::common::status::Status;
 
 /// Reads a response from the reader.
-pub fn read_response(reader: &mut impl BufRead) -> Result<Response, ResponseParsingError> {
-    let (first_line, headers, body) = read_message(reader, true)?;
+pub async fn read_response(reader: &mut (impl AsyncBufReadExt + Unpin)) -> Result<Response, ResponseParsingError> {
+    let (first_line, headers, body) = read_message(reader, true).await?;
 
     let (http_version, status) = parse_first_line(&first_line)?;
 
@@ -37,7 +37,7 @@ fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use tokio::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
@@ -48,15 +48,15 @@ mod tests {
     use crate::common::status;
     use crate::util::mock::MockReader;
 
-    fn test_read_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
+    async fn test_read_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::new(data);
         let mut reader = BufReader::new(reader);
-        let actual_result = read_response(&mut reader);
+        let actual_result = read_response(&mut reader).await;
         assert_eq!(format!("{:?}", expected_result), format!("{:?}", actual_result));
     }
 
-    #[test]
-    fn no_headers_or_body() {
+    #[tokio::test]
+    async fn no_headers_or_body() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -64,11 +64,11 @@ mod tests {
                 headers: Default::default(),
                 body: vec![],
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn headers_and_body() {
+    #[tokio::test]
+    async fn headers_and_body() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             Ok(Response {
@@ -76,11 +76,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn headers_and_body_fragmented() {
+    #[tokio::test]
+    async fn headers_and_body_fragmented() {
         test_read_response(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             Ok(Response {
@@ -88,11 +88,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn only_one_response_read() {
+    #[tokio::test]
+    async fn only_one_response_read() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -100,11 +100,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn long_body() {
+    #[tokio::test]
+    async fn long_body() {
         let body = b"iuwrhgiuelrguihwleriughwleiruhglweiurhgliwerg fkwfowjeofjiwoefijwef \
         wergiuwehrgiuwehilrguwehlrgiuw fewfwferg wenrjg; weirng lwieurhg owieurhg oeiuwrhg oewirg er\
         gweuirghweiurhgleiwurhglwieurhglweiurhglewiurhto8w374yto8374yt9p18234u50982@#$%#$%^&%^*(^)&(\
@@ -124,11 +124,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
                 body: body.to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn no_content_length() {
+    #[tokio::test]
+    async fn no_content_length() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -136,11 +136,11 @@ mod tests {
                 headers: Default::default(),
                 body: "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn custom_header() {
+    #[tokio::test]
+    async fn custom_header() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             Ok(Response {
@@ -148,11 +148,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
                 body: vec![],
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn not_found_404_response() {
+    #[tokio::test]
+    async fn not_found_404_response() {
         test_read_response(
             vec!["HTTP/1.1 404 Not Found\r\n\r\n"],
             Ok(Response {
@@ -160,11 +160,11 @@ mod tests {
                 headers: Default::default(),
                 body: vec![],
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn no_status_reason() {
+    #[tokio::test]
+    async fn no_status_reason() {
         test_read_response(
             vec!["HTTP/1.1 400\r\n\r\n"],
             Ok(Response {
@@ -172,155 +172,155 @@ mod tests {
                 headers: Default::default(),
                 body: vec![],
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn invalid_status_code() {
+    #[tokio::test]
+    async fn invalid_status_code() {
         test_read_response(
             vec!["HTTP/1.1 300000 Not Found\r\n\r\n"],
             Err(InvalidStatusCode),
-        );
+        ).await;
     }
 
-    #[test]
-    fn negative_status_code() {
+    #[tokio::test]
+    async fn negative_status_code() {
         test_read_response(
             vec!["HTTP/1.1 -30 Not Found\r\n\r\n"],
             Err(InvalidStatusCode),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_response() {
+    #[tokio::test]
+    async fn gibberish_response() {
         test_read_response(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_newline() {
+    #[tokio::test]
+    async fn gibberish_with_newline() {
         test_read_response(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_crlf() {
+    #[tokio::test]
+    async fn gibberish_with_crlf() {
         test_read_response(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn gibberish_with_crlfs_at_end() {
+    #[tokio::test]
+    async fn gibberish_with_crlfs_at_end() {
         test_read_response(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             Err(InvalidStatusCode),
-        );
+        ).await;
     }
 
-    #[test]
-    fn all_newlines() {
+    #[tokio::test]
+    async fn all_newlines() {
         test_read_response(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn all_crlfs() {
+    #[tokio::test]
+    async fn all_crlfs() {
         test_read_response(
             vec!["\r\n\r\n\r\n\r\n"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn wrong_http_version() {
+    #[tokio::test]
+    async fn wrong_http_version() {
         test_read_response(
             vec!["HTTP/2.0 404 Not Found\r\n\r\n"],
             Err(WrongHttpVersion.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn no_status_code() {
+    #[tokio::test]
+    async fn no_status_code() {
         test_read_response(
             vec!["HTTP/1.1\r\n\r\n"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn missing_crlfs() {
+    #[tokio::test]
+    async fn missing_crlfs() {
         test_read_response(
             vec!["HTTP/1.1 200 OK"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn only_one_crlf() {
+    #[tokio::test]
+    async fn only_one_crlf() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\n"],
             Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn bad_header() {
+    #[tokio::test]
+    async fn bad_header() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn bad_content_length_value() {
+    #[tokio::test]
+    async fn bad_content_length_value() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
             Err(InvalidHeaderValue.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn no_data() {
+    #[tokio::test]
+    async fn no_data() {
         test_read_response(
             vec![],
             Err(EOF.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn one_character() {
+    #[tokio::test]
+    async fn one_character() {
         test_read_response(
             vec!["a"],
             Err(BadSyntax.into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn one_crlf_nothing_else() {
+    #[tokio::test]
+    async fn one_crlf_nothing_else() {
         test_read_response(
             vec!["\r\n"],
             Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()),
-        );
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_long() {
+    #[tokio::test]
+    async fn content_length_too_long() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")).into()),
-        );
+            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "early eof")).into()),
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_long_with_request_after() {
+    #[tokio::test]
+    async fn content_length_too_long_with_request_after() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             Ok(Response {
@@ -328,11 +328,11 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
                 body: "helloHT".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 
-    #[test]
-    fn content_length_too_short() {
+    #[tokio::test]
+    async fn content_length_too_short() {
         test_read_response(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             Ok(Response {
@@ -340,6 +340,6 @@ mod tests {
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
                 body: "hel".as_bytes().to_vec(),
             }),
-        );
+        ).await;
     }
 }

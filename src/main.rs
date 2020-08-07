@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Error;
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use my_http::common::{header, status};
 use my_http::common::response::Response;
@@ -11,11 +11,10 @@ use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
 use my_http::server::Router;
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> tokio::io::Result<()> {
     let mut server = Server::new(Config {
-        addr: "0.0.0.0:80",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(1000),
+        addr: SocketAddr::from_str("0.0.0.0:80").unwrap(),
         tls_config: None,
     });
 
@@ -31,7 +30,7 @@ fn main() -> Result<(), Error> {
     server.router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
     server.router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
-    server.start()
+    server.start().await
 }
 
 fn file_router(directory: &'static str) -> Router {
