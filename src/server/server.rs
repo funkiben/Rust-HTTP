@@ -70,12 +70,12 @@ impl Server {
         if let Some(ref tls_config) = self.tls_config {
             self.handle_tls_connection(tls_config, stream);
         } else {
-            self.handle_non_tls_connection(stream);
+            self.handle_plaintext_connection(stream);
         }
     }
 
     /// Handles a new connection using plaintext.
-    fn handle_non_tls_connection(&self, stream: TcpStream) {
+    fn handle_plaintext_connection(&self, stream: TcpStream) {
         respond_to_requests(&stream, &stream, &self.router);
     }
 
@@ -143,14 +143,14 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 
 /// Checks if the given IO error is OK.
 fn is_io_error_ok(error: &Error) -> bool {
-    // WouldBlock and TimedOut are for read timeouts. Linux uses WouldBlock, Windows uses TimedOut
+    // WouldBlock and TimedOut are for read timeouts. Linux uses WouldBlock, Windows uses TimedOut.
     error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
         // ConnectionAborted is caused from https streams that have closed
         || error.kind() == ErrorKind::ConnectionAborted
 }
 
 /// Writes the response as bytes to the given writer.
-fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
+pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
     // write! will call write multiple times and does not flush
     write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {

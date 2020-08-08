@@ -125,7 +125,7 @@ impl Connection {
 }
 
 /// Writes the given request to the given writer.
-fn write_request(mut writer: impl Write, request: &Request) -> std::io::Result<()> {
+pub fn write_request(writer: &mut impl Write, request: &Request) -> std::io::Result<()> {
     write!(writer, "{} {} {}\r\n", request.method, request.uri, HTTP_VERSION)?;
     for (header, values) in request.headers.iter() {
         for value in values {
