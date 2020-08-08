@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
-use crate::common::parse::error::ResponseParsingError;
-use crate::common::parse::read_response;
 use crate::common::request::Request;
 use crate::common::response::Response;
+use crate::parse::read_response;
+use crate::parse::error::ResponseParsingError;
 
 /// Client for making HTTP requests.
 pub struct Client {

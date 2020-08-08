@@ -4,3 +4,6 @@ pub mod thread_pool;
 /// Utility for creating mock trait implementations.
 #[cfg(test)]
 pub mod mock;
+
+/// Stream using TLS.
+pub mod tls_stream;

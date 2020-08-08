@@ -1,9 +1,9 @@
 use std::io::{BufRead, Error, ErrorKind, Read};
 
 use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-use crate::common::parse::error::ParsingError;
-use crate::common::parse::error_take::ErrorTake;
 use crate::header_map;
+use crate::parse::error::ParsingError;
+use crate::parse::error_take::ErrorTake;
 
 /// The maximum size a line can be in an HTTP message.
 /// A line is any data that is terminated by a CRLF, e.g. a header.
@@ -156,10 +156,10 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::common::parse::common::read_message;
-    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
-    use crate::common::parse::error::ParsingError;
     use crate::util::mock::{EndlessMockReader, MockReader};
+    use crate::parse::common::read_message;
+    use crate::parse::error::ParsingError;
+    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, EOF, Reading, InvalidChunkSize};
 
     fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = MockReader::new(input);

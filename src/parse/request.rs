@@ -2,9 +2,9 @@ use std::io::BufRead;
 
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
-use crate::common::parse::common::read_message;
-use crate::common::parse::error::{ParsingError, RequestParsingError};
 use crate::common::request::Request;
+use crate::parse::common::read_message;
+use crate::parse::error::{ParsingError, RequestParsingError};
 
 /// Reads a request from the given buffered reader.
 /// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
@@ -44,13 +44,13 @@ mod tests {
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
-    use crate::common::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
-    use crate::common::parse::error::RequestParsingError;
-    use crate::common::parse::error::RequestParsingError::UnrecognizedMethod;
-    use crate::common::parse::read_request;
     use crate::common::request::Request;
     use crate::header_map;
     use crate::util::mock::MockReader;
+    use crate::parse::request::read_request;
+    use crate::parse::error::ParsingError::{EOF, Reading, BadSyntax, WrongHttpVersion, InvalidHeaderValue};
+    use crate::parse::error::RequestParsingError::UnrecognizedMethod;
+    use crate::parse::error::RequestParsingError;
 
     fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
         let reader = MockReader::new(data);

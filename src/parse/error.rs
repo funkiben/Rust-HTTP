@@ -17,21 +17,21 @@ pub enum ParsingError {
     Reading(Error),
 }
 
-/// The possible errors that can be encountered when trying to parse a request.
+/// Possible errors that can be encountered when trying to parse a request.
 #[derive(Debug)]
 pub enum RequestParsingError {
     /// Method is unrecognized.
     UnrecognizedMethod(String),
-    /// Base parsing error.
+    /// Base error.
     Base(ParsingError),
 }
 
-/// Error when parsing an HTTP response from a server.
+/// Possible errors that can be encountered when trying to parse a response.
 #[derive(Debug)]
 pub enum ResponseParsingError {
     /// Response had an unknown status code.
     InvalidStatusCode,
-    /// Base parsing error.
+    /// Base error.
     Base(ParsingError),
 }
 
