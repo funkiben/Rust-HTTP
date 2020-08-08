@@ -267,3 +267,55 @@ fn insanely_huge_body() {
     assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
+
+// fn stress_test(server_config: Config, num_connections: usize, num_requests_per_connection: usize, requests: &[Request], expected_responses: &[Response]) {
+//     let mut server = Server::new(server_config);
+//
+//     for request in requests {
+//         server.router.on()
+//     }
+//
+//     let mut handlers = vec![];
+//     for _ in 0..num_connections {
+//         handlers.push(spawn(|| {
+//
+//             let mut client = TcpStream::connect("localhost:7000").unwrap();
+//
+//             for i in 0..num_requests_per_connection {
+//
+//
+//                 for requests in requests {
+//
+//                 }
+//
+//                 let mut actual = [0u8; 19];
+//                 loop {
+//                     client.write(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+//                     if let Err(_) = client.read_exact(&mut actual) {
+//                         client = TcpStream::connect("localhost:7000").unwrap();
+//                         continue;
+//                     }
+//                     break;
+//                 }
+//
+//                 assert_eq!(String::from_utf8_lossy(&actual), String::from_utf8_lossy(b"HTTP/1.1 200 OK\r\n\r\n"));
+//
+//                 client.write(b"GET /foo HTTP/1.1\r\ncontent-length: 5\r\ncustom-header: custom header value\r\n\r\nhello").unwrap();
+//
+//                 let mut actual = [0u8; 85];
+//                 client.read(&mut actual).unwrap();
+//
+//                 assert!(String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncustom-header-2: custom header value 2\r\ncontent-length: 7\r\n\r\nwelcome")
+//                     || String::from_utf8_lossy(&actual) == String::from_utf8_lossy(b"HTTP/1.1 234 hi\r\ncontent-length: 7\r\ncustom-header-2: custom header value 2\r\n\r\nwelcome"));
+//
+//                 if i < 14 {
+//                     sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
+//                 }
+//             }
+//         }));
+//     }
+//
+//     for handler in handlers {
+//         handler.join().unwrap()
+//     }
+// }

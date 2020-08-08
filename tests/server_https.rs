@@ -78,7 +78,7 @@ fn curl_multiple_requests_same_connection() {
 }
 
 #[test]
-fn curl_multiple_concurrent_requests() {
+fn curl_multiple_concurrent_connections_with_many_requests() {
     let mut server = Server::new(Config {
         addr: "localhost:8002",
         connection_handler_threads: 5,
@@ -113,6 +113,43 @@ fn curl_multiple_concurrent_requests() {
                 .arg("--request").arg("GET").arg("https://localhost:8002")
                 .output().unwrap();
             assert_eq!("i worki worki worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
+        }));
+    }
+
+    for handler in handlers {
+        handler.join().unwrap();
+    }
+}
+
+#[test]
+fn curl_multiple_concurrent_connections_with_single_requests() {
+    let mut server = Server::new(Config {
+        addr: "localhost:8005",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(10000),
+        tls_config: Some(get_tsl_config()),
+    });
+
+    server.router.on_prefix("/", |_, _| {
+        SendResponse(Response {
+            status: status::OK,
+            headers: header_map![(CONTENT_LENGTH, "6")],
+            body: "i work".as_bytes().to_vec(),
+        })
+    });
+
+    spawn(|| server.start());
+
+    sleep(Duration::from_millis(1000));
+
+    let mut handlers = vec![];
+    for _ in 0..200 {
+        handlers.push(spawn(|| {
+            let output = Command::new("curl")
+                .arg("-k")
+                .arg("--request").arg("GET").arg("https://localhost:8005")
+                .output().unwrap();
+            assert_eq!("i work", String::from_utf8_lossy(&output.stdout));
         }));
     }
 
