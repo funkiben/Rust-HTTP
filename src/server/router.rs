@@ -17,7 +17,7 @@ pub enum ListenerResult {
 
 /// A router that calls functions when requests with certain URI's are received.
 pub struct Router {
-    listeners: Vec<(&'static str, Box<dyn Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync>)>
+    listeners: Vec<(String, Box<dyn Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync>)>
 }
 
 impl Router {
@@ -29,14 +29,15 @@ impl Router {
     /// Calls the given function on requests with URI's that start with uri.
     /// If uri is empty, then the function will be called on all requests directed to this router.
     /// The first argument to the listener function is the URI local to this router.
-    pub fn on_prefix(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
-        self.listeners.push((uri, Box::new(listener)))
+    pub fn on_prefix(&mut self, uri: &str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
+        self.listeners.push((uri.into(), Box::new(listener)))
     }
 
     /// Calls the given function on only requests with URIs that equal the given URI.
-    pub fn on(&mut self, uri: &'static str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
+    pub fn on(&mut self, uri: &str, listener: impl Fn(&str, &Request) -> ListenerResult + 'static + Send + Sync) {
+        let uri_string = uri.to_string();
         let listener = move |router_uri: &str, request: &Request| {
-            if uri == router_uri {
+            if uri_string.eq(router_uri) {
                 return listener(router_uri, request);
             }
             Next
@@ -57,9 +58,10 @@ impl Router {
     /// sub_router.on("/bar", |_,_| { println!("will print on requests to /foo/bar"); Next });
     /// router.route("/foo", sub_router);
     /// ```
-    pub fn route(&mut self, uri: &'static str, router: Router) {
+    pub fn route(&mut self, uri: &str, router: Router) {
+        let uri_length = uri.len();
         let listener = move |request_uri: &str, request: &Request| {
-            router.result_internal(&request_uri[uri.len()..], request)
+            router.result_internal(&request_uri[uri_length..], request)
         };
         self.on_prefix(uri, listener);
     }
