@@ -7,18 +7,19 @@ use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use my_http::client::write_request;
-use my_http::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
+use my_http::common::header::{ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::common::status::Status;
+use my_http::header_map;
 use my_http::server::{Config, write_response};
 use my_http::server::ListenerResult::SendResponse;
 use my_http::server::Server;
 
 #[test]
-fn multiple_concurrent_connections_with_many_requests() {
+fn many_requests_with_short_headers_and_short_bodies() {
     stress_test(
         Config {
             addr: "localhost:7000",
@@ -26,7 +27,7 @@ fn multiple_concurrent_connections_with_many_requests() {
             read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
-        13, 11,
+        13, 11, true,
         vec![
             (
                 Request {
@@ -66,7 +67,81 @@ fn multiple_concurrent_connections_with_many_requests() {
 }
 
 #[test]
-fn many_concurrent_connections_with_one_simple_request() {
+fn many_connections_and_many_large_messages() {
+    let test_html = std::fs::read("./tests/files/test.html").unwrap();
+    let test_jpg = std::fs::read("./tests/files/test.jpg").unwrap();
+    stress_test(
+        Config {
+            addr: "localhost:7000",
+            connection_handler_threads: 5,
+            read_timeout: Duration::from_millis(500),
+            tls_config: None,
+        },
+        15, 15, true,
+        vec![
+            (
+                Request {
+                    uri: "/hello/world/html".to_string(),
+                    method: Method::GET,
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_jpg.len().to_string()),
+                        ("custom-header", "custom header value"),
+                        ("custom-header", "custom header value2"),
+                        ("custom-header", "custom header value3"),
+                        ("custom-header", "custom header value4"),
+                        ("custom-header", "custom header value5"),
+                        ("custom-header", "custom header value6"),
+                        ("custom-header", "custom header value7"),
+                        ("custom-header", "custom header value8"),
+                        ("custom-header", "custom header value9"),
+                        ("custom-header", "custom header value10"),
+                        ("custom-header", "custom header value11"),
+                        ("accept", "blah blah blah"),
+                        ("hello", "bye"),
+                        ("bye", "hello"),
+                        ("heyy", "foijr ewoi fjeigruh jseliurgh seliug he fowiuejf oweifj oweijfow "),
+                        ("host", "yahayah"),
+                        ("date", "rwgwrfwef"),
+                        ("time", "freg esrg erg"),
+                        ("expect", "freg esrg iofj wioefj pweijfo weijfp qwiefj pqeifjperg"),
+                        ("expires", "freg esrgeo urghj oeuirhgj oeiwjrgp wiejf pweifj pweijfpwrg erg"),
+                        ("forwarded", "freg esrg erg"),
+                    ],
+                    body: test_jpg,
+                },
+                Response {
+                    status: Status {
+                        code: 505,
+                        reason: "helloooo",
+                    },
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_html.len().to_string()),
+                        (ACCEPT, "blah blah blah"),
+                        (ACCEPT_CHARSET, "blah blah blah"),
+                        (ACCEPT_ENCODING, "blah blah blah efwi jwef wef "),
+                        (ACCEPT_LANGUAGE, "blah blah blah"),
+                        (ACCEPT_RANGES, "blah blwef wefpoi wjefi wjepf wah blah"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 1"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 2"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 3"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 4"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 5"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 6"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 7"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 8"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 9"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 10"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 11"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 12"),
+                    ],
+                    body: test_html
+                }
+            )
+        ])
+}
+
+#[test]
+fn many_connections_with_one_simple_request() {
     stress_test(
         Config {
             addr: "localhost:7006",
@@ -74,7 +149,7 @@ fn many_concurrent_connections_with_one_simple_request() {
             read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
-        200, 1,
+        200, 1, false,
         vec![
             (
                 Request {
@@ -93,7 +168,7 @@ fn many_concurrent_connections_with_one_simple_request() {
 }
 
 #[test]
-fn many_concurrent_connections_with_many_simple_requests() {
+fn many_connections_with_many_simple_requests() {
     stress_test(
         Config {
             addr: "localhost:7006",
@@ -101,7 +176,34 @@ fn many_concurrent_connections_with_many_simple_requests() {
             read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
-        10, 10,
+        10, 10, true,
+        vec![
+            (
+                Request {
+                    uri: "/".to_string(),
+                    method: Method::GET,
+                    headers: Default::default(),
+                    body: vec![],
+                },
+                Response {
+                    status: status::OK,
+                    headers: Default::default(),
+                    body: vec![],
+                }
+            )
+        ])
+}
+
+#[test]
+fn many_concurrent_connections_with_many_simple_requests_no_delay() {
+    stress_test(
+        Config {
+            addr: "localhost:7006",
+            connection_handler_threads: 5,
+            read_timeout: Duration::from_millis(500),
+            tls_config: None,
+        },
+        10, 10, false,
         vec![
             (
                 Request {
@@ -277,7 +379,7 @@ fn insanely_huge_body() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-fn stress_test(server_config: Config, num_connections: usize, num_loops_per_connection: usize, messages: Vec<(Request, Response)>) {
+fn stress_test(server_config: Config, num_connections: usize, num_loops_per_connection: usize, delays: bool, messages: Vec<(Request, Response)>) {
     let addr = server_config.addr;
     let mut server = Server::new(server_config);
 
@@ -326,8 +428,10 @@ fn stress_test(server_config: Config, num_connections: usize, num_loops_per_conn
 
                     assert_eq!(expected_response, &actual_response);
 
-                    // sleep random fraction of a second
-                    sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
+                    if delays {
+                        // sleep random fraction of a second
+                        sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
+                    }
                 }
             }
         }));
