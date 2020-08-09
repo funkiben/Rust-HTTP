@@ -1,5 +1,6 @@
 use std::fs;
-use std::io::{BufReader, Write, Read};
+use std::io::{BufReader, Read, Write};
+use std::net::TcpStream;
 use std::process::Command;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
@@ -7,12 +8,16 @@ use std::time::Duration;
 use rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
 
 use my_http::common::header::CONTENT_LENGTH;
+use my_http::common::method::Method;
+use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::SendResponse;
-use std::net::TcpStream;
+use util::curl;
+
+mod util;
 
 #[test]
 fn curl_request() {
@@ -35,12 +40,14 @@ fn curl_request() {
 
     sleep(Duration::from_millis(1000));
 
-    let output = Command::new("curl")
-        .arg("-k")
-        .arg("--request").arg("GET").arg("https://localhost:8000")
-        .output().unwrap();
+    let output = curl::request("localhost:8000", &Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: Default::default(),
+        body: vec![],
+    }, true);
 
-    assert_eq!("i work", String::from_utf8_lossy(&output.stdout));
+    assert_eq!("i work", output);
 }
 
 #[test]
@@ -64,17 +71,14 @@ fn curl_multiple_requests_same_connection() {
 
     sleep(Duration::from_millis(1000));
 
-    let output = Command::new("curl")
-        .arg("-k")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .arg("--request").arg("GET").arg("https://localhost:8001")
-        .output().unwrap();
+   let output = curl::repeat_request("localhost:8001", &Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: Default::default(),
+        body: vec![]
+    }, 6, true);
 
-    assert_eq!("i worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
+    assert_eq!("i worki worki worki worki worki work", output);
 }
 
 #[test]
@@ -200,7 +204,6 @@ fn normal_http_message() {
     let mut response = String::new();
 
     client.read_to_string(&mut response).unwrap();
-
 }
 
 fn get_tsl_config() -> ServerConfig {

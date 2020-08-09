@@ -2,11 +2,9 @@ extern crate my_http;
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
 use std::thread::{sleep, spawn};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration};
 
-use my_http::client::write_request;
 use my_http::common::header::{ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
@@ -14,13 +12,15 @@ use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::common::status::Status;
 use my_http::header_map;
-use my_http::server::{Config, write_response};
-use my_http::server::ListenerResult::SendResponse;
+use my_http::server::{Config};
 use my_http::server::Server;
+use crate::util::test_server::test_server;
+
+mod util;
 
 #[test]
 fn many_requests_with_short_headers_and_short_bodies() {
-    stress_test(
+    test_server(
         Config {
             addr: "localhost:7000",
             connection_handler_threads: 5,
@@ -70,9 +70,9 @@ fn many_requests_with_short_headers_and_short_bodies() {
 fn many_connections_and_many_large_messages() {
     let test_html = std::fs::read("./tests/files/test.html").unwrap();
     let test_jpg = std::fs::read("./tests/files/test.jpg").unwrap();
-    stress_test(
+    test_server(
         Config {
-            addr: "localhost:7000",
+            addr: "localhost:7001",
             connection_handler_threads: 5,
             read_timeout: Duration::from_millis(500),
             tls_config: None,
@@ -142,9 +142,9 @@ fn many_connections_and_many_large_messages() {
 
 #[test]
 fn many_connections_with_one_simple_request() {
-    stress_test(
+    test_server(
         Config {
-            addr: "localhost:7006",
+            addr: "localhost:7002",
             connection_handler_threads: 5,
             read_timeout: Duration::from_millis(500),
             tls_config: None,
@@ -169,9 +169,9 @@ fn many_connections_with_one_simple_request() {
 
 #[test]
 fn many_connections_with_many_simple_requests() {
-    stress_test(
+    test_server(
         Config {
-            addr: "localhost:7006",
+            addr: "localhost:7003",
             connection_handler_threads: 5,
             read_timeout: Duration::from_millis(500),
             tls_config: None,
@@ -196,9 +196,9 @@ fn many_connections_with_many_simple_requests() {
 
 #[test]
 fn many_concurrent_connections_with_many_simple_requests_no_delay() {
-    stress_test(
+    test_server(
         Config {
-            addr: "localhost:7006",
+            addr: "localhost:7004",
             connection_handler_threads: 5,
             read_timeout: Duration::from_millis(500),
             tls_config: None,
@@ -224,7 +224,7 @@ fn many_concurrent_connections_with_many_simple_requests_no_delay() {
 #[test]
 fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:7001",
+        addr: "localhost:7005",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -236,7 +236,7 @@ fn infinite_connection() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7001").unwrap();
+    let mut client = TcpStream::connect("localhost:7005").unwrap();
 
     loop {
         if let Err(_) = client.write(b"blah") {
@@ -254,7 +254,7 @@ fn infinite_connection() {
 #[test]
 fn infinite_headers() {
     let server = Server::new(Config {
-        addr: "localhost:7002",
+        addr: "localhost:7006",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -266,7 +266,7 @@ fn infinite_headers() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7002").unwrap();
+    let mut client = TcpStream::connect("localhost:7006").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\n").unwrap();
 
@@ -286,7 +286,7 @@ fn infinite_headers() {
 #[test]
 fn infinite_header_value() {
     let server = Server::new(Config {
-        addr: "localhost:7003",
+        addr: "localhost:7007",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -298,7 +298,7 @@ fn infinite_header_value() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7003").unwrap();
+    let mut client = TcpStream::connect("localhost:7007").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\nheader: ").unwrap();
 
@@ -318,7 +318,7 @@ fn infinite_header_value() {
 #[test]
 fn infinite_chunked_body() {
     let server = Server::new(Config {
-        addr: "localhost:7004",
+        addr: "localhost:7008",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -330,7 +330,7 @@ fn infinite_chunked_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7004").unwrap();
+    let mut client = TcpStream::connect("localhost:7008").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n").unwrap();
 
@@ -350,7 +350,7 @@ fn infinite_chunked_body() {
 #[test]
 fn insanely_huge_body() {
     let server = Server::new(Config {
-        addr: "localhost:7005",
+        addr: "localhost:7009",
         connection_handler_threads: 5,
         read_timeout: Duration::from_millis(500),
         tls_config: None,
@@ -362,7 +362,7 @@ fn insanely_huge_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7005").unwrap();
+    let mut client = TcpStream::connect("localhost:7009").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ncontent-length: 99999999\r\n\r\n").unwrap();
 
@@ -379,65 +379,3 @@ fn insanely_huge_body() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
-fn stress_test(server_config: Config, num_connections: usize, num_loops_per_connection: usize, delays: bool, messages: Vec<(Request, Response)>) {
-    let addr = server_config.addr;
-    let mut server = Server::new(server_config);
-
-    for (request, response) in messages.iter() {
-        let uri = &request.uri;
-        let response = response.clone();
-        let request = request.clone();
-        server.router.on(uri, move |_, req| {
-            assert_eq!(request, *req);
-            SendResponse(response.clone())
-        });
-    }
-
-    let messages: Vec<(Request, Vec<u8>)> = messages.into_iter().map(|(req, res)| {
-        let mut bytes: Vec<u8> = vec![];
-        write_response(&mut bytes, &res).unwrap();
-        (req, bytes)
-    }).collect();
-
-    let messages = Arc::new(messages);
-
-    spawn(|| server.start());
-    sleep(Duration::from_millis(100));
-
-    let mut handlers = vec![];
-    for _ in 0..num_connections {
-        let messages = Arc::clone(&messages);
-        handlers.push(spawn(move || {
-            let mut client = TcpStream::connect(addr).unwrap();
-
-            for _ in 0..num_loops_per_connection {
-                for (request, expected_response) in messages.iter() {
-                    let mut actual_response = vec![0u8; expected_response.len()];
-
-                    loop {
-                        let result = write_request(&mut client, request)
-                            .and_then(|_| client.read_exact(&mut actual_response));
-
-                        if result.is_err() {
-                            client = TcpStream::connect(addr).unwrap();
-                            continue;
-                        }
-
-                        break;
-                    }
-
-                    assert_eq!(expected_response, &actual_response);
-
-                    if delays {
-                        // sleep random fraction of a second
-                        sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
-                    }
-                }
-            }
-        }));
-    }
-
-    for handler in handlers {
-        handler.join().unwrap();
-    }
-}
