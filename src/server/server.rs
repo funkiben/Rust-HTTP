@@ -20,6 +20,8 @@ use crate::util::tls_stream::TlsStream;
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
+const BUF_WRITER_CAPACITY: usize = 1024;
+
 /// An HTTP server.
 pub struct Server {
     /// The config for the server.
@@ -89,7 +91,9 @@ impl Server {
 /// Uses the given router to respond to requests read from reader. Writes responses to writer.
 /// If the router has no route for a request, then a 404 response with no body is returned.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, router: &Router) {
+fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
+    let mut writer = BufWriter::with_capacity(BUF_WRITER_CAPACITY, writer);
+
     let result = read_requests(reader, |request| {
         let write_result = write_response_from_router(&mut writer, router, &request);
         should_close_after_response(&request) || write_result.is_err()
