@@ -89,9 +89,7 @@ impl Server {
 /// Uses the given router to respond to requests read from reader. Writes responses to writer.
 /// If the router has no route for a request, then a 404 response with no body is returned.
 /// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
-    let mut writer = BufWriter::new(writer);
-
+fn respond_to_requests<R: Read, W: Write>(reader: R, mut writer: W, router: &Router) {
     let result = read_requests(reader, |request| {
         let write_result = write_response_from_router(&mut writer, router, &request);
         should_close_after_response(&request) || write_result.is_err()
@@ -151,6 +149,8 @@ fn is_io_error_ok(error: &Error) -> bool {
 
 /// Writes the response as bytes to the given writer.
 pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
+    // TODO avoid calling write so many times
+    // use buf writer or no??
     // write! will call write multiple times and does not flush
     write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
