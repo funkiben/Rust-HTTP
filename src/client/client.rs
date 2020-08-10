@@ -7,8 +7,8 @@ use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::parse::read_response;
 use crate::parse::error::ResponseParsingError;
+use crate::parse::read_response;
 
 /// Client for making HTTP requests.
 pub struct Client {

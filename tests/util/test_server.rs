@@ -5,7 +5,6 @@ use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use my_http::client::write_request;
-use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps};
 use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::server::{Config, Server, write_response};
@@ -63,7 +62,7 @@ pub fn test_server(config: Config, num_connections: usize, num_loops_per_connect
     }
 }
 
-pub fn test_server_with_curl(config: Config, num_connections: usize, mut messages: Vec<(Request, Response)>, https: bool) {
+pub fn test_server_with_curl(config: Config, num_connections: usize, messages: Vec<(Request, Response)>, https: bool) {
     let addr = config.addr;
 
     create_and_start_server(config, &messages);

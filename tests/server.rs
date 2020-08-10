@@ -152,7 +152,7 @@ fn curl_request() {
         tls_config: None,
     });
 
-    server.router.on_prefix("/", |_, req| {
+    server.router.on_prefix("/", |_, _| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],

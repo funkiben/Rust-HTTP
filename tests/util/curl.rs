@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::process::Command;
 
 use my_http::common::request::Request;

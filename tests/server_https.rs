@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
-use std::process::Command;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
@@ -29,7 +28,7 @@ fn curl_request() {
         tls_config: Some(get_tsl_config()),
     });
 
-    server.router.on_prefix("/", |_, req| {
+    server.router.on_prefix("/", |_, _| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],

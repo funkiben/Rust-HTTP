@@ -42,11 +42,11 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::util::mock::MockReader;
-    use crate::parse::response::read_response;
-    use crate::parse::error::ParsingError::{Reading, BadSyntax, InvalidHeaderValue, EOF, WrongHttpVersion};
-    use crate::parse::error::ResponseParsingError::InvalidStatusCode;
+    use crate::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
     use crate::parse::error::ResponseParsingError;
+    use crate::parse::error::ResponseParsingError::InvalidStatusCode;
+    use crate::parse::response::read_response;
+    use crate::util::mock::MockReader;
 
     fn test_read_response(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
         let reader = MockReader::new(data);

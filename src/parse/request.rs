@@ -46,11 +46,11 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
-    use crate::util::mock::MockReader;
-    use crate::parse::request::read_request;
-    use crate::parse::error::ParsingError::{EOF, Reading, BadSyntax, WrongHttpVersion, InvalidHeaderValue};
-    use crate::parse::error::RequestParsingError::UnrecognizedMethod;
+    use crate::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
     use crate::parse::error::RequestParsingError;
+    use crate::parse::error::RequestParsingError::UnrecognizedMethod;
+    use crate::parse::request::read_request;
+    use crate::util::mock::MockReader;
 
     fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
         let reader = MockReader::new(data);
