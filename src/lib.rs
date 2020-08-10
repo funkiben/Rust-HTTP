@@ -9,3 +9,5 @@ pub(crate) mod parse;
 
 /// Utility components.
 pub(crate) mod util;
+
+pub(crate) mod deframing;
