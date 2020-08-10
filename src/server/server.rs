@@ -152,6 +152,8 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     // TODO avoid calling write so many times
     // use buf writer or no??
     // write! will call write multiple times and does not flush
+    // TODO avoid calling write so many times
+    // use buf writer or no??
     write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
         for value in values {
