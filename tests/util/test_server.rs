@@ -1,27 +1,21 @@
-use my_http::server::{Config, Server, write_response};
+use std::io::Read;
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::thread::{sleep, spawn};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use my_http::client::write_request;
+use my_http::common::header::{CONTENT_LENGTH, HeaderMapOps};
 use my_http::common::request::Request;
 use my_http::common::response::Response;
-use my_http::server::ListenerResult::SendResponse;
-use std::time::{UNIX_EPOCH, SystemTime, Duration};
-use std::thread::{sleep, spawn};
-use std::net::TcpStream;
-use my_http::client::write_request;
-use std::sync::Arc;
-use std::io::Read;
+use my_http::server::{Config, Server, write_response};
+use my_http::server::ListenerResult::{Next, SendResponseArc};
 
-pub fn test_server(server_config: Config, num_connections: usize, num_loops_per_connection: usize, delays: bool, messages: Vec<(Request, Response)>) {
-    let addr = server_config.addr;
-    let mut server = Server::new(server_config);
+use crate::util::curl;
 
-    for (request, response) in messages.iter() {
-        let uri = &request.uri;
-        let response = response.clone();
-        let request = request.clone();
-        server.router.on(uri, move |_, req| {
-            assert_eq!(request, *req);
-            SendResponse(response.clone())
-        });
-    }
+pub fn test_server(config: Config, num_connections: usize, num_loops_per_connection: usize, sleeps_between_requests: bool, messages: Vec<(Request, Response)>) {
+    let addr = config.addr;
+    create_and_start_server(config, &messages);
 
     let messages: Vec<(Request, Vec<u8>)> = messages.into_iter().map(|(req, res)| {
         let mut bytes: Vec<u8> = vec![];
@@ -30,9 +24,6 @@ pub fn test_server(server_config: Config, num_connections: usize, num_loops_per_
     }).collect();
 
     let messages = Arc::new(messages);
-
-    spawn(|| server.start());
-    sleep(Duration::from_millis(100));
 
     let mut handlers = vec![];
     for _ in 0..num_connections {
@@ -58,7 +49,7 @@ pub fn test_server(server_config: Config, num_connections: usize, num_loops_per_
 
                     assert_eq!(expected_response, &actual_response);
 
-                    if delays {
+                    if sleeps_between_requests {
                         // sleep random fraction of a second
                         sleep(Duration::from_nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64));
                     }
@@ -70,4 +61,49 @@ pub fn test_server(server_config: Config, num_connections: usize, num_loops_per_
     for handler in handlers {
         handler.join().unwrap();
     }
+}
+
+pub fn test_server_with_curl(config: Config, num_connections: usize, mut messages: Vec<(Request, Response)>, https: bool) {
+    let addr = config.addr;
+
+    create_and_start_server(config, &messages);
+
+    let messages = Arc::new(messages);
+
+    let mut handlers = vec![];
+    for _ in 0..num_connections {
+        let messages = Arc::clone(&messages);
+        handlers.push(spawn(move || {
+            let requests: Vec<&Request> = messages.iter().map(|(req, _)| req).collect();
+            let expected_output: Vec<u8> = messages.iter().flat_map(|(_, res)| &res.body).map(|x| *x).collect();
+            let expected_output = String::from_utf8_lossy(&expected_output).to_string();
+
+            let actual_output = curl::requests(addr, &requests, https);
+            assert_eq!(actual_output, expected_output);
+        }));
+    }
+
+    for handler in handlers {
+        handler.join().unwrap();
+    }
+}
+
+fn create_and_start_server(server_config: Config, messages: &Vec<(Request, Response)>) {
+    let mut server = Server::new(server_config);
+
+    for (request, response) in messages {
+        let uri = &request.uri;
+        let response = Arc::new(response.clone());
+        let request = request.clone();
+        server.router.on(uri, move |_, req|
+            if request.eq(req) {
+                SendResponseArc(response.clone())
+            } else {
+                Next
+            },
+        );
+    }
+
+    spawn(|| server.start());
+    sleep(Duration::from_millis(100));
 }

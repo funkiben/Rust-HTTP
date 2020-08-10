@@ -150,7 +150,7 @@ standard_headers! {
 /// ```
 #[macro_export]
 macro_rules! header_map {
-    () => { crate::common::header::HeaderMap::new() };
+    () => { $crate::common::header::HeaderMap::new() };
     ($(($header:expr, $value:expr)),+ $(,)?) => {
         <$crate::common::header::HeaderMap as $crate::common::header::HeaderMapOps>::from_pairs(vec![
             $(($header.into(), $value.into()),)+

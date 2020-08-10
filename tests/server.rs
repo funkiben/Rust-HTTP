@@ -3,7 +3,7 @@ extern crate my_http;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread::{sleep, spawn};
-use std::time::{Duration};
+use std::time::Duration;
 
 use my_http::common::header::{ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
@@ -12,9 +12,12 @@ use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::common::status::Status;
 use my_http::header_map;
-use my_http::server::{Config};
+use my_http::server::Config;
+use my_http::server::ListenerResult::SendResponse;
 use my_http::server::Server;
-use crate::util::test_server::test_server;
+
+use crate::util::curl;
+use crate::util::test_server::{test_server, test_server_with_curl};
 
 mod util;
 
@@ -134,10 +137,112 @@ fn many_connections_and_many_large_messages() {
                         ("hello", "blah blwef wefpoi wjefi wjepf wah blah 11"),
                         ("hello", "blah blwef wefpoi wjefi wjepf wah blah 12"),
                     ],
-                    body: test_html
+                    body: test_html,
                 }
             )
         ])
+}
+
+#[test]
+fn curl_request() {
+    let mut server = Server::new(Config {
+        addr: "localhost:7011",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    server.router.on_prefix("/", |_, req| {
+        SendResponse(Response {
+            status: status::OK,
+            headers: header_map![(CONTENT_LENGTH, "6")],
+            body: "i work".as_bytes().to_vec(),
+        })
+    });
+
+    spawn(|| server.start().unwrap());
+
+    sleep(Duration::from_millis(1000));
+
+    let output = curl::request("localhost:7011", &Request {
+        uri: "/".to_string(),
+        method: Method::GET,
+        headers: header_map![],
+        body: vec![],
+    }, false);
+
+    assert_eq!("i work", output);
+}
+
+#[test]
+fn curl_many_connections_and_many_large_messages() {
+    let test_html = std::fs::read("./tests/files/test.html").unwrap();
+    test_server_with_curl(
+        Config {
+            addr: "localhost:7010",
+            connection_handler_threads: 5,
+            read_timeout: Duration::from_millis(500),
+            tls_config: None,
+        },
+        20,
+        vec![
+            (
+                Request {
+                    uri: "/hello/world/html".to_string(),
+                    method: Method::GET,
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_html.len().to_string()),
+                        ("custom-header", "custom header value"),
+                        ("custom-header", "custom header value2"),
+                        ("custom-header", "custom header value3"),
+                        ("custom-header", "custom header value4"),
+                        ("custom-header", "custom header value5"),
+                        ("custom-header", "custom header value6"),
+                        ("custom-header", "custom header value7"),
+                        ("custom-header", "custom header value8"),
+                        ("custom-header", "custom header value9"),
+                        ("custom-header", "custom header value10"),
+                        ("custom-header", "custom header value11"),
+                        ("accept", "blah blah blah"),
+                        ("hello", "bye"),
+                        ("bye", "hello"),
+                        ("heyy", "foijr ewoi fjeigruh jseliurgh seliug he fowiuejf oweifj oweijfow "),
+                        ("host", "yahayah"),
+                        ("date", "rwgwrfwef"),
+                        ("time", "freg esrg erg"),
+                        ("expect", "frreg esrg iofj wioefj pweijfo weijfp qwiefj pqeifjperg"),
+                        ("expires", "freg esrgeo urghj oeuirhgj oeiwjrgp wiejf pweifj pweijfpwrg erg"),
+                        ("forwarded", "freg esrg erg"),
+                    ],
+                    body: test_html.clone(),
+                },
+                Response {
+                    status: status::OK,
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_html.len().to_string()),
+                        (ACCEPT, "blah blah blah"),
+                        (ACCEPT_CHARSET, "blah blah blah"),
+                        (ACCEPT_ENCODING, "blah blah blah efwi jwef wef "),
+                        (ACCEPT_LANGUAGE, "blah blah blah"),
+                        (ACCEPT_RANGES, "blah blwef wefpoi wjefi wjepf wah blah"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 1"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 2"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 3"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 4"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 5"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 6"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 7"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 8"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 9"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 10"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 11"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 12"),
+                    ],
+                    body: test_html,
+                }
+            )
+        ],
+        false)
 }
 
 #[test]
@@ -242,6 +347,37 @@ fn infinite_connection() {
         if let Err(_) = client.write(b"blah") {
             break;
         }
+    }
+
+    let mut response = String::new();
+    let read_result = client.read_to_string(&mut response);
+
+    assert!(read_result.is_err());
+    assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
+}
+
+#[test]
+fn infinite_connection_with_sleeps() {
+    let server = Server::new(Config {
+        addr: "localhost:7012",
+        connection_handler_threads: 5,
+        read_timeout: Duration::from_millis(500),
+        tls_config: None,
+    });
+
+    spawn(|| {
+        server.start().unwrap();
+    });
+
+    sleep(Duration::from_millis(500));
+
+    let mut client = TcpStream::connect("localhost:7012").unwrap();
+
+    loop {
+        if let Err(_) = client.write(b"blah") {
+            break;
+        }
+        sleep(Duration::from_millis(50));
     }
 
     let mut response = String::new();

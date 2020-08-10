@@ -16,6 +16,7 @@ use my_http::header_map;
 use my_http::server::{Config, Server};
 use my_http::server::ListenerResult::SendResponse;
 use util::curl;
+use util::test_server;
 
 mod util;
 
@@ -24,11 +25,11 @@ fn curl_request() {
     let mut server = Server::new(Config {
         addr: "localhost:8000",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        read_timeout: Duration::from_millis(500),
         tls_config: Some(get_tsl_config()),
     });
 
-    server.router.on_prefix("/", |_, _| {
+    server.router.on_prefix("/", |_, req| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],
@@ -36,14 +37,14 @@ fn curl_request() {
         })
     });
 
-    spawn(|| server.start());
+    spawn(|| server.start().unwrap());
 
     sleep(Duration::from_millis(1000));
 
     let output = curl::request("localhost:8000", &Request {
         uri: "/".to_string(),
         method: Method::GET,
-        headers: Default::default(),
+        headers: header_map![],
         body: vec![],
     }, true);
 
@@ -55,7 +56,7 @@ fn curl_multiple_requests_same_connection() {
     let mut server = Server::new(Config {
         addr: "localhost:8001",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
+        read_timeout: Duration::from_millis(500),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -71,95 +72,71 @@ fn curl_multiple_requests_same_connection() {
 
     sleep(Duration::from_millis(1000));
 
-   let output = curl::repeat_request("localhost:8001", &Request {
-        uri: "/".to_string(),
-        method: Method::GET,
-        headers: Default::default(),
-        body: vec![]
-    }, 6, true);
+    let output = curl::requests(
+        "localhost:8001",
+        &vec![&Request {
+            uri: "/".to_string(),
+            method: Method::GET,
+            headers: header_map![],
+            body: vec![],
+        }; 6],
+        true);
 
     assert_eq!("i worki worki worki worki worki work", output);
 }
 
 #[test]
 fn curl_multiple_concurrent_connections_with_many_requests() {
-    let mut server = Server::new(Config {
-        addr: "localhost:8002",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
-        tls_config: Some(get_tsl_config()),
-    });
-
-    server.router.on_prefix("/", |_, _| {
-        SendResponse(Response {
-            status: status::OK,
-            headers: header_map![(CONTENT_LENGTH, "6")],
-            body: "i work".as_bytes().to_vec(),
-        })
-    });
-
-    spawn(|| server.start());
-
-    sleep(Duration::from_millis(1000));
-
-    let mut handlers = vec![];
-    for _ in 0..20 {
-        handlers.push(spawn(|| {
-            let output = Command::new("curl")
-                .arg("-k")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .arg("--request").arg("GET").arg("https://localhost:8002")
-                .output().unwrap();
-            assert_eq!("i worki worki worki worki worki worki worki work", String::from_utf8_lossy(&output.stdout));
-        }));
-    }
-
-    for handler in handlers {
-        handler.join().unwrap();
-    }
+    test_server::test_server_with_curl(
+        Config {
+            addr: "localhost:8002",
+            connection_handler_threads: 5,
+            read_timeout: Duration::from_millis(500),
+            tls_config: Some(get_tsl_config()),
+        },
+        50,
+        vec![(
+                 Request {
+                     uri: "/".to_string(),
+                     method: Method::GET,
+                     headers: header_map![
+                        ("content-length", "10"),
+                        ("random", "blah"),
+                        ("hello", "bye")
+                     ],
+                     body: b"0123456789".to_vec(),
+                 },
+                 Response {
+                     status: status::OK,
+                     headers: header_map![(CONTENT_LENGTH, "6")],
+                     body: "i work".as_bytes().to_vec(),
+                 }
+             ); 10], true);
 }
 
 #[test]
 fn curl_multiple_concurrent_connections_with_single_requests() {
-    let mut server = Server::new(Config {
-        addr: "localhost:8005",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(10000),
-        tls_config: Some(get_tsl_config()),
-    });
-
-    server.router.on_prefix("/", |_, _| {
-        SendResponse(Response {
-            status: status::OK,
-            headers: header_map![(CONTENT_LENGTH, "6")],
-            body: "i work".as_bytes().to_vec(),
-        })
-    });
-
-    spawn(|| server.start());
-
-    sleep(Duration::from_millis(1000));
-
-    let mut handlers = vec![];
-    for _ in 0..200 {
-        handlers.push(spawn(|| {
-            let output = Command::new("curl")
-                .arg("-k")
-                .arg("--request").arg("GET").arg("https://localhost:8005")
-                .output().unwrap();
-            assert_eq!("i work", String::from_utf8_lossy(&output.stdout));
-        }));
-    }
-
-    for handler in handlers {
-        handler.join().unwrap();
-    }
+    test_server::test_server_with_curl(
+        Config {
+            addr: "localhost:8005",
+            connection_handler_threads: 5,
+            read_timeout: Duration::from_millis(500),
+            tls_config: Some(get_tsl_config()),
+        },
+        200,
+        vec![(
+            Request {
+                uri: "/".to_string(),
+                method: Method::GET,
+                headers: header_map![],
+                body: vec![],
+            },
+            Response {
+                status: status::OK,
+                headers: header_map![(CONTENT_LENGTH, "6")],
+                body: "i work".as_bytes().to_vec(),
+            }
+        )], true);
 }
 
 #[test]
