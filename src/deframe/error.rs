@@ -21,7 +21,7 @@ pub enum ParsingError {
 #[derive(Debug)]
 pub enum RequestParsingError {
     /// Method is unrecognized.
-    UnrecognizedMethod(String),
+    UnrecognizedMethod,
     /// Base error.
     Base(ParsingError),
 }

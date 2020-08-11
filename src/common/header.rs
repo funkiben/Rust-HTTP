@@ -44,6 +44,19 @@ macro_rules! standard_headers {
                 }
             }
         }
+
+        impl From<String> for Header {
+            /// Gets a header from the given string representing the header name.
+            fn from(mut value: String) -> Header {
+                value.to_lowercase();
+                match value.as_str() {
+                    $(
+                    $value => $name,
+                    )+
+                    _ => Header::Custom(value)
+                }
+            }
+        }
     }
 }
 
