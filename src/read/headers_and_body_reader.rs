@@ -44,7 +44,7 @@ impl HeadersAndBodyReader {
                     }
                 }
             }
-            return Ok(None)
+            return Ok(None);
         }
     }
 }

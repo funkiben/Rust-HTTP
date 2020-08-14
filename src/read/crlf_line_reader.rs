@@ -28,7 +28,6 @@ impl CrlfLineReader {
     }
 }
 
-
 fn read_crlf_line(reader: &mut impl BufRead, line: &mut String) -> Result<bool, ParsingError> {
     match reader.read_line(line) {
         Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(false),

@@ -145,7 +145,7 @@ fn read_chunked(reader: &mut impl BufRead, body: &mut Vec<u8>, state: &mut Chunk
                 }
             }
         }
-        return Ok(false)
+        return Ok(false);
     }
 }
 
@@ -156,8 +156,8 @@ mod tests {
     use crate::header_map;
     use crate::read::body_reader::BodyReader;
     use crate::read::error::ParsingError;
+    use crate::read::error::ParsingError::{BadSyntax, ContentLengthTooLarge};
     use crate::util::mock::{EndlessMockReader, MockReader};
-    use crate::read::error::ParsingError::{ContentLengthTooLarge, BadSyntax};
 
     fn test_sized(size: usize, tests: Vec<(Vec<&[u8]>, Result<Option<Vec<u8>>, ParsingError>)>) {
         let body_reader = BodyReader::new(false, &header_map![("content-length", size.to_string())]).unwrap();
