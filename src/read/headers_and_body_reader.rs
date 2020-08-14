@@ -27,22 +27,24 @@ impl HeadersAndBodyReader {
     }
 
     pub fn read(&mut self, reader: &mut impl BufRead) -> Result<Option<(HeaderMap, Vec<u8>)>, ParsingError> {
-        match &mut self.state {
-            State::Headers(headers_reader) => {
-                if let Some(headers) = headers_reader.read(reader)? {
-                    let body_reader = BodyReader::new(self.read_body_if_no_content_length, &headers)?;
-                    self.state = State::Body(Some(headers), body_reader);
-                    return self.read(reader);
+        loop {
+            match &mut self.state {
+                State::Headers(headers_reader) => {
+                    if let Some(headers) = headers_reader.read(reader)? {
+                        let body_reader = BodyReader::new(self.read_body_if_no_content_length, &headers)?;
+                        self.state = State::Body(Some(headers), body_reader);
+                        continue;
+                    }
+                }
+                State::Body(headers, body_reader) => {
+                    if let Some(body) = body_reader.read(reader)? {
+                        let ret = Ok(Some((headers.take().unwrap(), body)));
+                        self.state = State::new();
+                        return ret;
+                    }
                 }
             }
-            State::Body(headers, body_reader) => {
-                if let Some(body) = body_reader.read(reader)? {
-                    let ret = Ok(Some((headers.take().unwrap(), body)));
-                    self.state = State::new();
-                    return ret;
-                }
-            }
+            return Ok(None)
         }
-        Ok(None)
     }
 }
