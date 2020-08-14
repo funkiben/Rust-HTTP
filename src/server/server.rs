@@ -187,7 +187,7 @@ mod tests {
     use crate::util::mock::{MockReader, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
-        let reader = MockReader::new(input);
+        let reader = MockReader::from_strs(input);
 
         let mut writer = MockWriter::new();
 

@@ -1,40 +1,74 @@
-use std::io::{BufRead, Error, ErrorKind, Read};
+use std::io::{BufRead, ErrorKind};
 
-use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-use crate::header_map;
-use crate::parse::error::ParsingError;
-use crate::parse::error_take::ErrorTake;
+use crate::common::header::HeaderMap;
+use crate::read::crlf_line_reader::CrlfLineReader;
+use crate::read::error::ParsingError;
+use crate::read::headers_and_body_reader::HeadersAndBodyReader;
 
-/// The maximum size a line can be in an HTTP message.
-/// A line is any data that is terminated by a CRLF, e.g. a header.
-/// Without this limit, a connection may be kept open indefinitely if no new lines are sent.
-const MAX_LINE_LENGTH: u64 = 512;
+type ParseFirstLineFn<R, E> = fn(&mut R, String) -> Result<(), E>;
+type SetHeadersAndBodyFn<R> = fn(&mut R, HeaderMap, Vec<u8>);
+type GetDefaultFn<R> = fn() -> R;
 
-/// The maximum allowed length of all the headers in a request or response that can be parsed.
-const MAX_HEADERS_LENGTH: u64 = 4096;
-
-/// The maximum allowed length of a request or response body that can be parsed.
-const MAX_BODY_LENGTH: u64 = 3 * 1024 * 1024; // 3 megabytes
-
-/// Reads the first line, headers, and body of any HTTP request or response.
-/// If a content length cannot be determined and read_if_no_content_length is true, then the
-/// remainder of data in the reader will be put in the body (meaning this function will block until
-/// the reader signals EOF). If it's false then no more data will be read after the headers, and the
-/// body will be empty.
-/// Returns a tuple of the first line of the request, the headers, and the body of the message.
-pub fn read_message(reader: &mut impl BufRead, read_if_no_content_length: bool) -> Result<(String, HeaderMap, Vec<u8>), ParsingError> {
-    let first_line = read_first_line(reader)?;
-    let headers = read_headers(reader)?;
-    let body = read_body(reader, &headers, read_if_no_content_length)?;
-
-    Ok((first_line, headers, body))
+pub struct MessageReader<T, R, E> {
+    inner: T,
+    state: State,
+    read_body_if_no_content_length: bool,
+    get_default_fn: GetDefaultFn<R>,
+    parse_first_line_fn: ParseFirstLineFn<R, E>,
+    set_headers_and_body_fn: SetHeadersAndBodyFn<R>,
+    message: Option<R>,
 }
 
-/// Reads the first line of a message.
-/// Maps UnexpectedEOF errors to EOF errors because EOF's are expected here.
-/// An EOF found when reading the first line of a message means the connection has closed and nothing else will be transmitted.
-fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
-    read_line(reader).map_err(|err|
+enum State {
+    FirstLine(CrlfLineReader),
+    HeadersAndBody(HeadersAndBodyReader),
+}
+
+impl State {
+    fn new() -> State {
+        State::FirstLine(CrlfLineReader::new())
+    }
+}
+
+impl<E: From<ParsingError>, T: BufRead, R> MessageReader<T, R, E> {
+    pub fn new(inner: T, read_body_if_no_content_length: bool, get_default_fn: GetDefaultFn<R>, parse_first_line_fn: ParseFirstLineFn<R, E>, set_headers_and_body_fn: SetHeadersAndBodyFn<R>) -> MessageReader<T, R, E> {
+        MessageReader {
+            inner,
+            parse_first_line_fn,
+            set_headers_and_body_fn,
+            read_body_if_no_content_length,
+            state: State::new(),
+            message: Some(get_default_fn()),
+            get_default_fn,
+        }
+    }
+
+    pub fn read(&mut self) -> Result<Option<R>, E> {
+        let message = self.message.as_mut().unwrap();
+
+        match &mut self.state {
+            State::FirstLine(reader) => {
+                if let Some(line) = map_unexpected_eof(reader.read(&mut self.inner))? {
+                    (self.parse_first_line_fn)(message, line)?;
+                    self.state = State::HeadersAndBody(HeadersAndBodyReader::new(self.read_body_if_no_content_length));
+                    return self.read();
+                }
+            }
+            State::HeadersAndBody(reader) => {
+                if let Some((headers, body)) = reader.read(&mut self.inner)? {
+                    (self.set_headers_and_body_fn)(message, headers, body);
+                    self.state = State::new();
+                    return Ok(self.message.replace((self.get_default_fn)()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+fn map_unexpected_eof<T>(res: Result<T, ParsingError>) -> Result<T, ParsingError> {
+    res.map_err(|err|
         match err {
             ParsingError::Reading(err) if err.kind() == ErrorKind::UnexpectedEof => ParsingError::EOF,
             x => x
@@ -42,140 +76,76 @@ fn read_first_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
     )
 }
 
-/// Reads a message body from the reader using the given headers.
-fn read_body(reader: &mut impl BufRead, headers: &HeaderMap, read_if_no_content_length: bool) -> Result<Vec<u8>, ParsingError> {
-    let mut reader = reader.error_take(MAX_BODY_LENGTH);
-
-    if let Some(body_length) = get_content_length(headers) {
-        read_body_with_length(&mut reader, body_length?)
-    } else if is_chunked_transfer_encoding(headers) {
-        read_chunked_body(&mut reader)
-    } else if read_if_no_content_length {
-        read_body_to_end(&mut reader)
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-/// Gets the value of a content-length header from the given header map. May return None if there's
-/// no content-length header, or an error if the content-length value can not be parsed.
-fn get_content_length(headers: &HeaderMap) -> Option<Result<usize, ParsingError>> {
-    headers.get_first_header_value(&CONTENT_LENGTH)
-        .map(|value| value.parse().map_err(|_| ParsingError::InvalidHeaderValue))
-}
-
-/// Checks if the header map has chunked transfer encoding header value.
-fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
-    headers.get_first_header_value(&TRANSFER_ENCODING).map(|v| v.eq("chunked")).unwrap_or(false)
-}
-
-/// Reads a message body from the reader with a defined length.
-fn read_body_with_length(reader: &mut impl Read, body_length: usize) -> Result<Vec<u8>, ParsingError> {
-    let mut buf = vec![0; body_length];
-    reader.read_exact(&mut buf)?;
-    Ok(buf)
-}
-
-/// Reads a chunked body from the reader.
-fn read_chunked_body(reader: &mut impl BufRead) -> Result<Vec<u8>, ParsingError> {
-    let mut body = vec![];
-    loop {
-        let line = read_line(reader)?;
-        let size = usize::from_str_radix(&line, 16).map_err(|_| ParsingError::InvalidChunkSize)?;
-
-        let mut buf = vec![0; size];
-        reader.read_exact(&mut buf)?;
-        body.append(&mut buf);
-
-        // get rid of crlf
-        read_line(reader)?;
-
-        if size == 0 {
-            break;
-        }
-    }
-
-    Ok(body)
-}
-
-/// Reads a message body from the reader. Reads until there's nothing left to read from.
-fn read_body_to_end(reader: &mut impl Read) -> Result<Vec<u8>, ParsingError> {
-    let mut buf = vec![];
-    reader.read_to_end(&mut buf)?;
-    Ok(buf)
-}
-
-/// Reads a single line, assuming the line ends in a CRLF ("\r\n").
-/// The CRLF is not included in the returned string.
-/// If the line is empty and contains no CRLF, then a BadSyntax error is returned
-fn read_line(reader: &mut impl BufRead) -> Result<String, ParsingError> {
-    let mut line = String::new();
-    reader.error_take(MAX_LINE_LENGTH).read_line(&mut line)?;
-
-    if line.is_empty() {
-        return Err(Error::from(ErrorKind::UnexpectedEof).into());
-    }
-
-    // pop the last two characters off and verify they're CRLF
-    match (line.pop(), line.pop()) {
-        (Some('\n'), Some('\r')) => Ok(line),
-        _ => Err(ParsingError::BadSyntax)
-    }
-}
-
-/// Reads and parses headers from the given reader.
-fn read_headers(reader: &mut impl BufRead) -> Result<HeaderMap, ParsingError> {
-    let mut reader = reader.error_take(MAX_HEADERS_LENGTH);
-
-    let mut headers = header_map![];
-
-    loop {
-        let line = read_line(&mut reader)?;
-
-        if line.is_empty() {
-            return Ok(headers);
-        }
-
-        let (header, value) = parse_header(line)?;
-        headers.add_header(header, value);
-    }
-}
-
-/// Parses the given line as a header. Splits the line at the first ": " pattern.
-fn parse_header(raw: String) -> Result<(Header, String), ParsingError> {
-    let mut split = raw.splitn(2, ": ");
-
-    let header_raw = split.next().ok_or(ParsingError::BadSyntax)?;
-    let value = split.next().ok_or(ParsingError::BadSyntax)?;
-
-    Ok((Header::from(header_raw), String::from(value)))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{BufRead, BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::parse::common::read_message;
-    use crate::parse::error::ParsingError;
-    use crate::parse::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
+    use crate::header_map;
+    use crate::read::error::ParsingError;
+    use crate::read::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
+    use crate::read::message_reader::MessageReader;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
-    fn test_read_message(input: Vec<&str>, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
-        let reader = MockReader::from_strs(input);
-        let mut reader = BufReader::new(reader);
-        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
+    #[derive(Eq, PartialEq, Debug)]
+    struct DummyMessage {
+        first_line: String,
+        headers: HeaderMap,
+        body: Vec<u8>,
     }
 
-    fn test_read_message_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected_output: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+    fn get_default() -> DummyMessage {
+        DummyMessage {
+            first_line: String::new(),
+            headers: header_map![],
+            body: vec![],
+        }
+    }
+
+    fn get_message_reader<T: BufRead>(inner: T, read_if_no_content_length: bool) -> MessageReader<T, DummyMessage, ParsingError> {
+        MessageReader::new(inner, read_if_no_content_length, get_default, parse_first_line, set_headers_and_body)
+    }
+
+    fn parse_first_line(msg: &mut DummyMessage, first_line: String) -> Result<(), ParsingError> {
+        msg.first_line = first_line;
+        Ok(())
+    }
+
+    fn set_headers_and_body(msg: &mut DummyMessage, headers: HeaderMap, body: Vec<u8>) {
+        msg.headers = headers;
+        msg.body = body;
+    }
+
+    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+        let reader = MockReader::from_strs(input);
+        let reader = BufReader::new(reader);
+        let actual = get_message_reader(reader, read_if_no_content_length).read();
+        assert_full_result_eq(actual, expected);
+    }
+
+    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
         let reader = EndlessMockReader::from_strs(data, endless_data);
-        let mut reader = BufReader::new(reader);
-        assert_eq!(format!("{:?}", read_message(&mut reader, read_if_no_content_length)), format!("{:?}", expected_output));
+        let reader = BufReader::new(reader);
+        let actual = get_message_reader(reader, read_if_no_content_length).read();
+        assert_full_result_eq(actual, expected);
+    }
+
+    fn assert_full_result_eq(actual: Result<Option<DummyMessage>, ParsingError>, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+        let actual = actual.map(|res| res.expect("Unable to read full message"));
+        match (actual, expected) {
+            (Ok(actual), Ok((expected_first_line, expected_headers, expected_body))) => {
+                assert_eq!(actual.first_line, expected_first_line);
+                assert_eq!(actual.headers, expected_headers);
+                assert_eq!(actual.body, expected_body);
+            }
+            (actual, expected) =>
+                assert_eq!(format!("{:?}", actual), format!("{:?}", expected))
+        }
     }
 
     #[test]
     fn no_headers_or_body() {
-        test_read_message(
+        test_with_eof(
             vec!["blah blah blah\r\n\r\n"],
             false,
             Ok(("blah blah blah".to_string(),
@@ -186,7 +156,7 @@ mod tests {
 
     #[test]
     fn headers_and_body() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -197,7 +167,7 @@ mod tests {
 
     #[test]
     fn headers_and_body_fragmented() {
-        test_read_message(
+        test_with_eof(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -208,7 +178,7 @@ mod tests {
 
     #[test]
     fn only_one_message_returned() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -231,7 +201,7 @@ mod tests {
         @#$%@#$^@#$%&#$@%^#$%@#$%@$^%$&$%^*^%&(^$%&*#%^$&@$%^#!#$!~```~~~```wefwef wef ee f efefe e{\
         @#$%@#$^@#$%&#$@%^#$%@#$%@$^%$&$%^*^%&(^$%&*#%^$&@$%^#!#$!~```~~~```wefwef wef ee f efefe e{\
         P{P[p[p[][][][]{}{}][][%%%\n\n\n\n\n\n wefwfw e2123456768960798676reresdsxfbcgrtg eg erg   ";
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -242,7 +212,7 @@ mod tests {
 
     #[test]
     fn read_if_no_content_length_true() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             true,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -253,7 +223,7 @@ mod tests {
 
     #[test]
     fn read_if_no_content_length_false() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -264,7 +234,7 @@ mod tests {
 
     #[test]
     fn custom_header() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -275,7 +245,7 @@ mod tests {
 
     #[test]
     fn gibberish() {
-        test_read_message(
+        test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
             Err(BadSyntax),
@@ -284,16 +254,16 @@ mod tests {
 
     #[test]
     fn gibberish_with_newline() {
-        test_read_message(
+        test_with_eof(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             false,
-            Err(BadSyntax.into()),
+            Err(BadSyntax),
         );
     }
 
     #[test]
     fn gibberish_with_crlf() {
-        test_read_message(
+        test_with_eof(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
             Err(BadSyntax),
@@ -302,7 +272,7 @@ mod tests {
 
     #[test]
     fn gibberish_with_crlfs_at_end() {
-        test_read_message(
+        test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
             Ok((
@@ -315,7 +285,7 @@ mod tests {
 
     #[test]
     fn all_newlines() {
-        test_read_message(
+        test_with_eof(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             false,
             Err(BadSyntax),
@@ -324,7 +294,7 @@ mod tests {
 
     #[test]
     fn all_crlfs() {
-        test_read_message(
+        test_with_eof(
             vec!["\r\n\r\n\r\n\r\n"],
             false,
             Ok(("".to_string(), Default::default(), vec![])),
@@ -333,7 +303,7 @@ mod tests {
 
     #[test]
     fn missing_crlfs() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK"],
             false,
             Err(BadSyntax),
@@ -342,7 +312,7 @@ mod tests {
 
     #[test]
     fn only_one_crlf() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
@@ -351,7 +321,7 @@ mod tests {
 
     #[test]
     fn bad_header() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
             false,
             Err(BadSyntax),
@@ -360,7 +330,7 @@ mod tests {
 
     #[test]
     fn bad_content_length_value() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
             false,
             Err(InvalidHeaderValue),
@@ -369,7 +339,7 @@ mod tests {
 
     #[test]
     fn no_data() {
-        test_read_message(
+        test_with_eof(
             vec![],
             false,
             Err(EOF),
@@ -378,7 +348,7 @@ mod tests {
 
     #[test]
     fn one_character() {
-        test_read_message(
+        test_with_eof(
             vec!["a"],
             false,
             Err(BadSyntax),
@@ -387,7 +357,7 @@ mod tests {
 
     #[test]
     fn one_crlf_nothing_else() {
-        test_read_message(
+        test_with_eof(
             vec!["\r\n"],
             false,
             Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
@@ -396,16 +366,16 @@ mod tests {
 
     #[test]
     fn content_length_too_long() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
     #[test]
     fn content_length_too_long_with_request_after() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -416,7 +386,7 @@ mod tests {
 
     #[test]
     fn content_length_too_short() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             false,
             Ok(("HTTP/1.1 200 OK".to_string(),
@@ -427,7 +397,7 @@ mod tests {
 
     #[test]
     fn chunked_body() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
                  "he\r\n",
@@ -446,7 +416,7 @@ mod tests {
 
     #[test]
     fn chunked_body_no_termination() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
                  "he\r\n",
@@ -461,7 +431,7 @@ mod tests {
 
     #[test]
     fn chunked_body_chunk_size_1_byte_too_large() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "3\r\n",
                  "he\r\n",
@@ -478,7 +448,7 @@ mod tests {
 
     #[test]
     fn chunked_body_chunk_size_2_bytes_too_large() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "4\r\n",
                  "he\r\n",
@@ -489,13 +459,13 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(InvalidChunkSize),
+            Err(BadSyntax),
         );
     }
 
     #[test]
     fn chunked_body_chunk_size_many_bytes_too_large() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "13\r\n",
                  "he\r\n",
@@ -514,7 +484,7 @@ mod tests {
 
     #[test]
     fn chunked_body_huge_chunk_size() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "100\r\n",
                  "he\r\n",
@@ -525,13 +495,13 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
     #[test]
     fn chunked_body_chunk_size_not_hex_digit() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "z\r\n",
                  "he\r\n",
@@ -548,7 +518,7 @@ mod tests {
 
     #[test]
     fn chunked_body_no_crlfs() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "zhelloiouf jwiufji ejif jef"],
             false,
@@ -559,18 +529,18 @@ mod tests {
 
     #[test]
     fn chunked_body_no_content() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "9\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))),
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
         );
     }
 
     #[test]
     fn chunked_body_no_trailing_crlf() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
                  "he\r\n",
@@ -586,7 +556,7 @@ mod tests {
 
     #[test]
     fn chunked_body_only_chunk_size() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "2\r\n",
                  "he"],
@@ -597,7 +567,7 @@ mod tests {
 
     #[test]
     fn empty_chunked_body() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "0\r\n",
                  "\r\n"],
@@ -653,7 +623,7 @@ mod tests {
                  wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
                  wefoi jawoiefj aowiefgj aelirugh aliowefj oaweijf oweijf owiejf oweifj weof\
          ";
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "C2A\r\n",
                  chunk,
@@ -669,7 +639,7 @@ mod tests {
 
     #[test]
     fn huge_first_line() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OKroig jseorgi jpseoriegj seorigj epoirgj epsigrj paweorgj aeo\
             6rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
             4rgj seprogj aeorigj pserijg pseirjgp seijg aowijrg03w8u4 t0q83u40 qwifwagf awiorjgf aowi\
@@ -687,7 +657,7 @@ mod tests {
 
     #[test]
     fn huge_header() {
-        test_read_message(
+        test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n",
                  "big-header: iowjfo iawjeofiajw pefiawjpefoi hwjpeiUF HWPIU4FHPAIWUHGPAIWUHGP AIWUHGRP \
             9Q43GHP 9Q3824U P9 658 23 YP 5698U24P985U2P198 4YU5P23985THPWERIUHG LIEAHVL DIFSJNV LAID\
@@ -705,7 +675,7 @@ mod tests {
 
     #[test]
     fn endless_line() {
-        test_read_message_endless(
+        test_endless(
             vec![],
             "blah",
             false,
@@ -715,49 +685,49 @@ mod tests {
 
     #[test]
     fn endless_headers() {
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blah\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahh\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahhhh\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: a\r\n",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: ",
             false,
             Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
         );
 
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             ": ",
             false,
@@ -767,7 +737,7 @@ mod tests {
 
     #[test]
     fn endless_body() {
-        test_read_message_endless(
+        test_endless(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             "blah blah blah",
             true,

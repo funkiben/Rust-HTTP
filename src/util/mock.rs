@@ -1,20 +1,29 @@
 use std::cmp::min;
-use std::io::{Read, Write};
+use std::io::{Read, Write, Error, ErrorKind};
 
 pub struct MockReader {
-    data: Vec<Vec<u8>>
+    pub return_would_block_when_empty: bool,
+    pub data: Vec<Vec<u8>>
 }
 
 impl MockReader {
-    pub fn new(data: Vec<&str>) -> MockReader {
-        MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect() }
+    pub fn from_strs(data: Vec<&str>) -> MockReader {
+        MockReader { data: data.into_iter().map(|s| s.as_bytes().to_vec()).collect(), return_would_block_when_empty: false }
+    }
+
+    pub fn from_bytes(data: Vec<&[u8]>) -> MockReader {
+        MockReader { data: data.into_iter().map(|s| s.to_vec()).collect(), return_would_block_when_empty: false }
     }
 }
 
 impl Read for MockReader {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
         if self.data.is_empty() {
-            return Ok(0);
+            return if !self.return_would_block_when_empty {
+                Ok(0)
+            } else {
+                Err(Error::from(ErrorKind::WouldBlock))
+            }
         }
 
         let next = self.data.first_mut().unwrap();
@@ -38,8 +47,12 @@ pub struct EndlessMockReader {
 }
 
 impl EndlessMockReader {
-    pub fn new(finite_data: Vec<&str>, sequence: &str) -> EndlessMockReader {
-        EndlessMockReader { finite_reader: MockReader::new(finite_data), sequence: sequence.as_bytes().to_vec(), current: 0 }
+    pub fn from_strs(finite_data: Vec<&str>, sequence: &str) -> EndlessMockReader {
+        EndlessMockReader { finite_reader: MockReader::from_strs(finite_data), sequence: sequence.as_bytes().to_vec(), current: 0 }
+    }
+
+    pub fn from_bytes(finite_data: Vec<&[u8]>, sequence: &[u8]) -> EndlessMockReader {
+        EndlessMockReader { finite_reader: MockReader::from_bytes(finite_data), sequence: sequence.to_vec(), current: 0 }
     }
 }
 
@@ -95,7 +108,7 @@ mod tests {
 
     #[test]
     fn endless_mock_reader() -> std::io::Result<()> {
-        let mut reader = EndlessMockReader::new(vec!["hello", "world", "ok bye"], "blah");
+        let mut reader = EndlessMockReader::from_strs(vec!["hello", "world", "ok bye"], "blah");
 
         test_read(&mut reader, "hello", 5);
         test_read(&mut reader, "w", 1);

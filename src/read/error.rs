@@ -13,6 +13,8 @@ pub enum ParsingError {
     EOF,
     /// Size of chunk in chunked transfer encoding can not be parsed as a number.
     InvalidChunkSize,
+    /// Content length exceeds maximum size.
+    ContentLengthTooLarge,
     /// Error reading from the reader.
     Reading(Error),
 }

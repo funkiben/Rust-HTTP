@@ -1,42 +1,65 @@
 use std::io::BufRead;
 
+use crate::common::header::HeaderMap;
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
-use crate::parse::common::read_message;
-use crate::parse::error::{ParsingError, RequestParsingError};
+use crate::header_map;
+use crate::read::error::{ParsingError, RequestParsingError};
+use crate::read::message_reader::MessageReader;
 
-/// Reads a request from the given buffered reader.
-/// If the data from the reader does not form a valid request or the connection has been closed, returns an error.
-pub fn read_request(reader: &mut impl BufRead) -> Result<Request, RequestParsingError> {
-    let (first_line, headers, body) = read_message(reader, false)?;
-
-    let (method, uri, http_version) = parse_first_line(&first_line)?;
-
-    if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
-    }
-
-    Ok(Request { method, uri: uri.to_string(), headers, body })
+pub struct RequestReader<T> {
+    inner: MessageReader<T, Request, RequestParsingError>
 }
 
+impl<T: BufRead> RequestReader<T> {
+    pub fn new(inner: T) -> RequestReader<T> {
+        RequestReader {
+            inner: MessageReader::new(inner, false, get_default, parse_first_line, set_headers_and_body)
+        }
+    }
 
-/// Parses the given line as the first line of a request.
-/// The first lines of requests have the form: "Method Request-URI HTTP-Version CRLF"
-fn parse_first_line(line: &str) -> Result<(Method, &str, &str), RequestParsingError> {
+    pub fn read(&mut self) -> Result<Option<Request>, RequestParsingError> {
+        self.inner.read()
+    }
+}
+
+fn parse_first_line(request: &mut Request, line: String) -> Result<(), RequestParsingError> {
     let mut split = line.split(" ");
 
     let method_raw = split.next().ok_or(ParsingError::BadSyntax)?;
     let uri = split.next().ok_or(ParsingError::BadSyntax)?;
     let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
 
-    Ok((parse_method(method_raw)?, uri, http_version))
+    if !http_version.eq(HTTP_VERSION) {
+        return Err(ParsingError::WrongHttpVersion.into());
+    }
+
+    request.method = parse_method(method_raw)?;
+    request.uri = uri.to_string();
+
+    Ok(())
+}
+
+fn set_headers_and_body(request: &mut Request, headers: HeaderMap, body: Vec<u8>) {
+    request.headers = headers;
+    request.body = body;
 }
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
 fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
-    Method::try_from_str(raw).ok_or_else(|| RequestParsingError::UnrecognizedMethod(String::from(raw)))
+    Method::try_from_str(raw).ok_or_else(|| RequestParsingError::UnrecognizedMethod)
 }
+
+fn get_default() -> Request {
+    Request {
+        uri: String::new(),
+        method: Method::GET,
+        headers: header_map![],
+        body: vec![],
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -46,16 +69,17 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
-    use crate::parse::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
-    use crate::parse::error::RequestParsingError;
-    use crate::parse::error::RequestParsingError::UnrecognizedMethod;
-    use crate::parse::request::read_request;
+    use crate::read::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
+    use crate::read::error::RequestParsingError;
+    use crate::read::error::RequestParsingError::UnrecognizedMethod;
+    use crate::read::request_reader::RequestReader;
     use crate::util::mock::MockReader;
 
-    fn test_read_request(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
+    fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
         let reader = MockReader::from_strs(data);
-        let mut reader = BufReader::new(reader);
-        let actual_result = read_request(&mut reader);
+        let reader = BufReader::new(reader);
+        let actual_result = RequestReader::new(reader).read();
+        let actual_result = actual_result.map(|res| res.expect("Could not read full request"));
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))
@@ -64,12 +88,12 @@ mod tests {
 
     #[test]
     fn no_data() {
-        test_read_request(vec![], Err(EOF.into()));
+        test_with_eof(vec![], Err(EOF.into()));
     }
 
     #[test]
     fn no_header_or_body() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -81,7 +105,7 @@ mod tests {
 
     #[test]
     fn no_header_or_body_fragmented() {
-        test_read_request(
+        test_with_eof(
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -93,7 +117,7 @@ mod tests {
 
     #[test]
     fn interesting_uri() {
-        test_read_request(
+        test_with_eof(
             vec!["GET /hello/world/ HTTP/1.1\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/hello/world/"),
@@ -105,7 +129,7 @@ mod tests {
 
     #[test]
     fn weird_uri() {
-        test_read_request(
+        test_with_eof(
             vec!["GET !#%$#/-+=_$+[]{}\\%&$ HTTP/1.1\r\n\r\n"],
             Ok(Request {
                 uri: String::from("!#%$#/-+=_$+[]{}\\%&$"),
@@ -117,7 +141,7 @@ mod tests {
 
     #[test]
     fn many_spaces_in_first_line() {
-        test_read_request(
+        test_with_eof(
             vec!["GET /hello/world/ HTTP/1.1 hello there blah blah\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/hello/world/"),
@@ -129,7 +153,7 @@ mod tests {
 
     #[test]
     fn only_reads_one_request() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -141,7 +165,7 @@ mod tests {
 
     #[test]
     fn headers() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\nconnection: close\r\nsomething: hello there goodbye\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -157,7 +181,7 @@ mod tests {
 
     #[test]
     fn repeated_headers() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -174,7 +198,7 @@ mod tests {
 
     #[test]
     fn headers_weird_case() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -190,7 +214,7 @@ mod tests {
 
     #[test]
     fn headers_only_colon_and_space() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -205,7 +229,7 @@ mod tests {
 
     #[test]
     fn body_with_content_length() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello"],
             Ok(Request {
                 uri: String::from("/"),
@@ -219,7 +243,7 @@ mod tests {
 
     #[test]
     fn body_fragmented() {
-        test_read_request(
+        test_with_eof(
             vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
             Ok(Request {
                 uri: String::from("/"),
@@ -233,20 +257,19 @@ mod tests {
 
     #[test]
     fn two_requests_with_bodies() {
-        test_read_request(
+        test_with_eof(
             vec![
                 "GET /body1 HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello",
                 "GET /body2 HTTP/1.1\r\ncontent-length: 7\r\n\r\ngoodbye"
             ],
-            Ok(
-                Request {
-                    uri: String::from("/body1"),
-                    method: Method::GET,
-                    headers: header_map![
+            Ok(Request {
+                uri: String::from("/body1"),
+                method: Method::GET,
+                headers: header_map![
                         (CONTENT_LENGTH, "5"),
                     ],
-                    body: b"hello".to_vec(),
-                }),
+                body: b"hello".to_vec(),
+            }),
         )
     }
 
@@ -266,7 +289,7 @@ mod tests {
          WEIOFJ WEFJ WPEIGJH 0348HG39 84GHJF039 84JF0394JF0 384G0348HGOWEIRGJPRGOJPE\
          WEIFOJ WEOFIJ PQIEGHQPIGH024UHG034IUHJG0WIUEJF0EIWJGF0WEGH 0WEGH W0IEJF PWIEJFG PWEF\
          W0EFJ 0WEFJ -WIJF-024JG0F34IGJ03 4I JG03W4IJG02HG0IQJGW-EIGJWPIEJGWeuf";
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 1131\r\n\r\n", &String::from_utf8_lossy(body)],
             Ok(Request {
                 uri: String::from("/"),
@@ -280,7 +303,7 @@ mod tests {
 
     #[test]
     fn header_multiple_colons() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: value: foo\r\n\r\n"],
             Ok(Request {
                 uri: String::from("/"),
@@ -294,111 +317,110 @@ mod tests {
 
     #[test]
     fn gibberish() {
-        test_read_request(
+        test_with_eof(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn no_requests_read_after_bad_request() {
-        test_read_request(
+        test_with_eof(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn lots_of_newlines() {
-        test_read_request(
+        test_with_eof(
             vec!["\n\n\n\n\n", "\n\n\n", "\n\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn no_newlines() {
-        test_read_request(
+        test_with_eof(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn invalid_method() {
-        test_read_request(
+        test_with_eof(
             vec!["yadadada / HTTP/1.1\r\n\r\n"],
-            Err(UnrecognizedMethod("yadadada".to_string())))
+            Err(UnrecognizedMethod))
     }
 
     #[test]
     fn wrong_http_version() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.0\r\n\r\n"],
             Err(WrongHttpVersion.into()))
     }
 
     #[test]
     fn missing_uri_and_version() {
-        test_read_request(
+        test_with_eof(
             vec!["GET\r\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn missing_http_version() {
-        test_read_request(
+        test_with_eof(
             vec!["GET /\r\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn bad_crlf() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn bad_header() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\nyadadada\r\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn header_with_newline() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\niwjfw\r\n\r\n"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn missing_crlf_after_last_header() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
             Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
     }
 
     #[test]
     fn missing_crlfs() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1"],
             Err(BadSyntax.into()))
     }
 
     #[test]
     fn body_no_content_length() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\nhello"],
-            Ok(
-                Request {
-                    uri: String::from("/"),
-                    method: Method::GET,
-                    headers: HeaderMap::new(),
-                    body: vec![],
-                }))
+            Ok(Request {
+                uri: String::from("/"),
+                method: Method::GET,
+                headers: HeaderMap::new(),
+                body: vec![],
+            }))
     }
 
     #[test]
     fn body_too_short_content_length() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 3\r\n\r\nhello"],
             Ok(Request {
                 uri: String::from("/"),
@@ -410,14 +432,14 @@ mod tests {
 
     #[test]
     fn body_content_length_too_long() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
-            Err(Reading(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")).into()))
+            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
     }
 
     #[test]
     fn body_content_length_too_long_request_after() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello",
                  "GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
             Ok(Request {
@@ -430,14 +452,14 @@ mod tests {
 
     #[test]
     fn negative_content_length() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
             Err(InvalidHeaderValue.into()));
     }
 
     #[test]
     fn request_with_0_content_length() {
-        test_read_request(
+        test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\nhello"],
             Ok(Request {
                 uri: String::from("/"),
