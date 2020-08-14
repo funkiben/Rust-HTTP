@@ -1,15 +1,15 @@
 use std::io::{BufRead, ErrorKind};
 
 use crate::common::header::HeaderMap;
-use crate::read::crlf_line_reader::CrlfLineReader;
-use crate::read::error::ParsingError;
-use crate::read::headers_and_body_reader::HeadersAndBodyReader;
+use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+use crate::deframe::error::DeframingError;
+use crate::deframe::headers_and_body_deframer::HeadersAndBodyDeframer;
 
 type ParseFirstLineFn<R, E> = fn(&mut R, String) -> Result<(), E>;
 type SetHeadersAndBodyFn<R> = fn(&mut R, HeaderMap, Vec<u8>);
 type GetDefaultFn<R> = fn() -> R;
 
-pub struct MessageReader<T, R, E> {
+pub struct MessageDeframer<T, R, E> {
     inner: T,
     state: State,
     read_body_if_no_content_length: bool,
@@ -20,57 +20,47 @@ pub struct MessageReader<T, R, E> {
 }
 
 enum State {
-    FirstLine(CrlfLineReader),
-    HeadersAndBody(HeadersAndBodyReader),
+    FirstLine(CrlfLineDeframer),
+    HeadersAndBody(HeadersAndBodyDeframer),
 }
 
-impl State {
-    fn new() -> State {
-        State::FirstLine(CrlfLineReader::new())
-    }
-}
-
-impl<E: From<ParsingError>, T: BufRead, R> MessageReader<T, R, E> {
-    pub fn new(inner: T, read_body_if_no_content_length: bool, get_default_fn: GetDefaultFn<R>, parse_first_line_fn: ParseFirstLineFn<R, E>, set_headers_and_body_fn: SetHeadersAndBodyFn<R>) -> MessageReader<T, R, E> {
-        MessageReader {
+impl<E: From<DeframingError>, T: BufRead, R> MessageDeframer<T, R, E> {
+    pub fn new(inner: T, read_body_if_no_content_length: bool, get_default_fn: GetDefaultFn<R>, parse_first_line_fn: ParseFirstLineFn<R, E>, set_headers_and_body_fn: SetHeadersAndBodyFn<R>) -> MessageDeframer<T, R, E> {
+        MessageDeframer {
             inner,
             parse_first_line_fn,
             set_headers_and_body_fn,
             read_body_if_no_content_length,
-            state: State::new(),
+            state: State::FirstLine(CrlfLineDeframer::new()),
             message: Some(get_default_fn()),
             get_default_fn,
         }
     }
 
-    pub fn read(&mut self) -> Result<Option<R>, E> {
+    pub fn read(&mut self) -> Result<R, E> {
         let message = self.message.as_mut().unwrap();
 
         match &mut self.state {
-            State::FirstLine(reader) => {
-                if let Some(line) = map_unexpected_eof(reader.read(&mut self.inner))? {
-                    (self.parse_first_line_fn)(message, line)?;
-                    self.state = State::HeadersAndBody(HeadersAndBodyReader::new(self.read_body_if_no_content_length));
-                    return self.read();
-                }
+            State::FirstLine(deframer) => {
+                let line = map_unexpected_eof(deframer.read(&mut self.inner))?;
+                (self.parse_first_line_fn)(message, line)?;
+                self.state = State::HeadersAndBody(HeadersAndBodyDeframer::new(self.read_body_if_no_content_length));
+                self.read()
             }
-            State::HeadersAndBody(reader) => {
-                if let Some((headers, body)) = reader.read(&mut self.inner)? {
-                    (self.set_headers_and_body_fn)(message, headers, body);
-                    self.state = State::new();
-                    return Ok(self.message.replace((self.get_default_fn)()));
-                }
+            State::HeadersAndBody(deframer) => {
+                let (headers, body) = deframer.read(&mut self.inner)?;
+                (self.set_headers_and_body_fn)(message, headers, body);
+                self.state = State::FirstLine(CrlfLineDeframer::new());
+                Ok(self.message.replace((self.get_default_fn)()).unwrap())
             }
         }
-
-        Ok(None)
     }
 }
 
-fn map_unexpected_eof<T>(res: Result<T, ParsingError>) -> Result<T, ParsingError> {
+fn map_unexpected_eof<T>(res: Result<T, DeframingError>) -> Result<T, DeframingError> {
     res.map_err(|err|
         match err {
-            ParsingError::Reading(err) if err.kind() == ErrorKind::UnexpectedEof => ParsingError::EOF,
+            DeframingError::Reading(err) if err.kind() == ErrorKind::UnexpectedEof => DeframingError::EOF,
             x => x
         }
     )
@@ -81,10 +71,10 @@ mod tests {
     use std::io::{BufRead, BufReader, Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
+    use crate::deframe::error::DeframingError;
+    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
+    use crate::deframe::message_deframer::MessageDeframer;
     use crate::header_map;
-    use crate::read::error::ParsingError;
-    use crate::read::error::ParsingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
-    use crate::read::message_reader::MessageReader;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
     #[derive(Eq, PartialEq, Debug)]
@@ -102,11 +92,11 @@ mod tests {
         }
     }
 
-    fn get_message_reader<T: BufRead>(inner: T, read_if_no_content_length: bool) -> MessageReader<T, DummyMessage, ParsingError> {
-        MessageReader::new(inner, read_if_no_content_length, get_default, parse_first_line, set_headers_and_body)
+    fn get_message_reader<T: BufRead>(inner: T, read_if_no_content_length: bool) -> MessageDeframer<T, DummyMessage, DeframingError> {
+        MessageDeframer::new(inner, read_if_no_content_length, get_default, parse_first_line, set_headers_and_body)
     }
 
-    fn parse_first_line(msg: &mut DummyMessage, first_line: String) -> Result<(), ParsingError> {
+    fn parse_first_line(msg: &mut DummyMessage, first_line: String) -> Result<(), DeframingError> {
         msg.first_line = first_line;
         Ok(())
     }
@@ -116,22 +106,21 @@ mod tests {
         msg.body = body;
     }
 
-    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
         let reader = MockReader::from_strs(input);
         let reader = BufReader::new(reader);
         let actual = get_message_reader(reader, read_if_no_content_length).read();
         assert_full_result_eq(actual, expected);
     }
 
-    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
+    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
         let reader = EndlessMockReader::from_strs(data, endless_data);
         let reader = BufReader::new(reader);
         let actual = get_message_reader(reader, read_if_no_content_length).read();
         assert_full_result_eq(actual, expected);
     }
 
-    fn assert_full_result_eq(actual: Result<Option<DummyMessage>, ParsingError>, expected: Result<(String, HeaderMap, Vec<u8>), ParsingError>) {
-        let actual = actual.map(|res| res.expect("Unable to read full message"));
+    fn assert_full_result_eq(actual: Result<DummyMessage, DeframingError>, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
         match (actual, expected) {
             (Ok(actual), Ok((expected_first_line, expected_headers, expected_body))) => {
                 assert_eq!(actual.first_line, expected_first_line);

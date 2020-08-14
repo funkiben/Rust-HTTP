@@ -5,33 +5,33 @@ use crate::common::header::HeaderMap;
 use crate::common::response::Response;
 use crate::common::status::Status;
 use crate::header_map;
-use crate::read::error::{ParsingError, ResponseParsingError};
-use crate::read::message_reader::MessageReader;
+use crate::deframe::error::{DeframingError};
+use crate::deframe::message_deframer::MessageDeframer;
 
-pub struct ResponseReader<T> {
-    inner: MessageReader<T, Response, ResponseParsingError>
+pub struct ResponseDeframer<T> {
+    inner: MessageDeframer<T, Response, DeframingError>
 }
 
-impl<T: BufRead> ResponseReader<T> {
-    pub fn new(inner: T) -> ResponseReader<T> {
-        ResponseReader {
-            inner: MessageReader::new(inner, true, get_default, parse_first_line, set_headers_and_body)
+impl<T: BufRead> ResponseDeframer<T> {
+    pub fn new(inner: T) -> ResponseDeframer<T> {
+        ResponseDeframer {
+            inner: MessageDeframer::new(inner, true, get_default, parse_first_line, set_headers_and_body)
         }
     }
 
-    pub fn read(&mut self) -> Result<Option<Response>, ResponseParsingError> {
+    pub fn read(&mut self) -> Result<Response, DeframingError> {
         self.inner.read()
     }
 }
 
-fn parse_first_line(response: &mut Response, line: String) -> Result<(), ResponseParsingError> {
+fn parse_first_line(response: &mut Response, line: String) -> Result<(), DeframingError> {
     let mut split = line.split(" ");
 
-    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
-    let status_code = split.next().ok_or(ParsingError::BadSyntax)?;
+    let http_version = split.next().ok_or(DeframingError::BadSyntax)?;
+    let status_code = split.next().ok_or(DeframingError::BadSyntax)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
+        return Err(DeframingError::WrongHttpVersion.into());
     }
 
     response.status = parse_status(status_code)?;
@@ -45,9 +45,9 @@ fn set_headers_and_body(request: &mut Response, headers: HeaderMap, body: Vec<u8
 }
 
 /// Parses the status code.
-fn parse_status(code: &str) -> Result<Status, ResponseParsingError> {
-    let code = code.parse().map_err(|_| ResponseParsingError::InvalidStatusCode)?;
-    Status::from_code(code).ok_or(ResponseParsingError::InvalidStatusCode)
+fn parse_status(code: &str) -> Result<Status, DeframingError> {
+    let code = code.parse().map_err(|_| DeframingError::InvalidStatusCode)?;
+    Status::from_code(code).ok_or(DeframingError::InvalidStatusCode)
 }
 
 fn get_default() -> Response {
@@ -65,17 +65,15 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::read::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
-    use crate::read::error::ResponseParsingError;
-    use crate::read::error::ResponseParsingError::InvalidStatusCode;
-    use crate::read::response_reader::ResponseReader;
+    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion, InvalidStatusCode};
+    use crate::deframe::response_deframer::ResponseDeframer;
     use crate::util::mock::MockReader;
+    use crate::deframe::error::DeframingError;
 
-    fn test_with_eof(data: Vec<&str>, expected_result: Result<Response, ResponseParsingError>) {
+    fn test_with_eof(data: Vec<&str>, expected_result: Result<Response, DeframingError>) {
         let reader = MockReader::from_strs(data);
         let reader = BufReader::new(reader);
-        let actual_result = ResponseReader::new(reader).read();
-        let actual_result = actual_result.map(|res| res.expect("Could not read full response"));
+        let actual_result = ResponseDeframer::new(reader).read();
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))

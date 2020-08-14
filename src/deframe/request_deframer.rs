@@ -5,34 +5,34 @@ use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
 use crate::header_map;
-use crate::read::error::{ParsingError, RequestParsingError};
-use crate::read::message_reader::MessageReader;
+use crate::deframe::error::{DeframingError};
+use crate::deframe::message_deframer::MessageDeframer;
 
-pub struct RequestReader<T> {
-    inner: MessageReader<T, Request, RequestParsingError>
+pub struct RequestDeframer<T> {
+    inner: MessageDeframer<T, Request, DeframingError>
 }
 
-impl<T: BufRead> RequestReader<T> {
-    pub fn new(inner: T) -> RequestReader<T> {
-        RequestReader {
-            inner: MessageReader::new(inner, false, get_default, parse_first_line, set_headers_and_body)
+impl<T: BufRead> RequestDeframer<T> {
+    pub fn new(inner: T) -> RequestDeframer<T> {
+        RequestDeframer {
+            inner: MessageDeframer::new(inner, false, get_default, parse_first_line, set_headers_and_body)
         }
     }
 
-    pub fn read(&mut self) -> Result<Option<Request>, RequestParsingError> {
+    pub fn read(&mut self) -> Result<Request, DeframingError> {
         self.inner.read()
     }
 }
 
-fn parse_first_line(request: &mut Request, line: String) -> Result<(), RequestParsingError> {
+fn parse_first_line(request: &mut Request, line: String) -> Result<(), DeframingError> {
     let mut split = line.split(" ");
 
-    let method_raw = split.next().ok_or(ParsingError::BadSyntax)?;
-    let uri = split.next().ok_or(ParsingError::BadSyntax)?;
-    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
+    let method_raw = split.next().ok_or(DeframingError::BadSyntax)?;
+    let uri = split.next().ok_or(DeframingError::BadSyntax)?;
+    let http_version = split.next().ok_or(DeframingError::BadSyntax)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
+        return Err(DeframingError::WrongHttpVersion.into());
     }
 
     request.method = parse_method(method_raw)?;
@@ -47,8 +47,8 @@ fn set_headers_and_body(request: &mut Request, headers: HeaderMap, body: Vec<u8>
 }
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
-fn parse_method(raw: &str) -> Result<Method, RequestParsingError> {
-    Method::try_from_str(raw).ok_or_else(|| RequestParsingError::UnrecognizedMethod)
+fn parse_method(raw: &str) -> Result<Method, DeframingError> {
+    Method::try_from_str(raw).ok_or_else(|| DeframingError::UnrecognizedMethod)
 }
 
 fn get_default() -> Request {
@@ -69,17 +69,15 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
-    use crate::read::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion};
-    use crate::read::error::RequestParsingError;
-    use crate::read::error::RequestParsingError::UnrecognizedMethod;
-    use crate::read::request_reader::RequestReader;
+    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion, UnrecognizedMethod};
+    use crate::deframe::request_deframer::RequestDeframer;
     use crate::util::mock::MockReader;
+    use crate::deframe::error::DeframingError;
 
-    fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, RequestParsingError>) {
+    fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, DeframingError>) {
         let reader = MockReader::from_strs(data);
         let reader = BufReader::new(reader);
-        let actual_result = RequestReader::new(reader).read();
-        let actual_result = actual_result.map(|res| res.expect("Could not read full request"));
+        let actual_result = RequestDeframer::new(reader).read();
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))

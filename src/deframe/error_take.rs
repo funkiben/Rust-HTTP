@@ -53,7 +53,7 @@ impl<T: BufRead> BufRead for CustomTake<T> {
 mod tests {
     use std::io::{Error, ErrorKind, Read};
 
-    use crate::read::error_take::ErrorTake;
+    use crate::deframe::error_take::ErrorTake;
     use crate::util::mock::EndlessMockReader;
 
     #[test]
