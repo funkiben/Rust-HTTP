@@ -2,22 +2,16 @@ use std::io::{BufRead, Error, ErrorKind, Read};
 
 use crate::common::header::{CONTENT_LENGTH, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
 use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+use crate::deframe::deframe::Deframe;
 use crate::deframe::error::DeframingError;
-use crate::deframe::error_take::ErrorTake;
+use crate::deframe::error_take::ReadExt;
 
 const MAX_BODY_SIZE: usize = 3 * 1024 * 1024; // 3 megabytes
 
-/// Deframer for the body of an HTTP request or responses.
-pub struct BodyDeframer {
-    kind: Kind,
-    body: Option<Vec<u8>>,
-}
-
-/// Different kinds of bodies.
-enum Kind {
-    Sized(usize),
-    UntilEof,
-    Chunked(ChunkState),
+pub enum BodyDeframer {
+    Sized(SizedDeframer),
+    UntilEOF(UntilEOFDeframer),
+    Chunked(ChunkDeframer),
     Empty,
 }
 
@@ -30,107 +24,203 @@ impl BodyDeframer {
             if size > MAX_BODY_SIZE {
                 return Err(DeframingError::ContentLengthTooLarge);
             }
-            return Ok(BodyDeframer { kind: Kind::Sized(0), body: Some(vec![0; size]) });
-        }
-
-        let kind = if is_chunked_transfer_encoding(headers) {
-            Kind::Chunked(ChunkState::Size(CrlfLineDeframer::new()))
+            Ok(BodyDeframer::Sized(SizedDeframer::new(size)))
+        } else if is_chunked_transfer_encoding(headers) {
+            Ok(BodyDeframer::Chunked(ChunkDeframer::new()))
         } else if read_if_no_content_length {
-            Kind::UntilEof
+            Ok(BodyDeframer::UntilEOF(UntilEOFDeframer::new()))
         } else {
-            Kind::Empty
-        };
-
-        Ok(BodyDeframer { kind, body: Some(vec![]) })
-    }
-
-    /// Reads data from the reader and tries to deframes a body.
-    pub fn read(&mut self, reader: &mut impl BufRead) -> Result<Vec<u8>, DeframingError> {
-        let body = self.body.as_mut().unwrap();
-        let mut reader = reader.error_take((MAX_BODY_SIZE - body.len()) as u64);
-
-        match &mut self.kind {
-            Kind::Sized(pos) => read_sized(&mut reader, body, pos),
-            Kind::Chunked(state) => read_chunked(&mut reader, body, state),
-            Kind::UntilEof => read_until_end(&mut reader, body),
-            Kind::Empty => Ok(())
-        }?;
-
-        self.kind = Kind::Empty;
-
-        Ok(self.body.replace(vec![]).unwrap())
-    }
-}
-
-/// The different states of deframing a chunked body.
-enum ChunkState {
-    Size(CrlfLineDeframer),
-    Body(usize, Option<Vec<u8>>),
-    TailingCrlf(CrlfLineDeframer, bool),
-}
-
-/// Reads a sized body from the reader.
-/// Writes into the given body, and uses the given "pos" as the location in body for writing new data.
-/// Data maybe be partially written into body even if an error is encountered.
-fn read_sized(reader: &mut impl Read, body: &mut Vec<u8>, pos: &mut usize) -> Result<(), DeframingError> {
-    loop {
-        let size = body.len();
-        let mut buf = &mut body[*pos..size];
-
-        match reader.read(&mut buf) {
-            Ok(0) if buf.len() != 0 => return Err(Error::from(ErrorKind::UnexpectedEof).into()),
-            Ok(amt) => {
-                *pos += amt;
-                if *pos == size {
-                    return Ok(());
-                }
-            }
-            Err(err) => return Err(err.into())
+            Ok(BodyDeframer::Empty)
         }
     }
 }
 
-/// Writes data from the given reader into body until EOF is reached.
-/// Data maybe be partially written into body even if an error is encountered.
-fn read_until_end(reader: &mut impl Read, body: &mut Vec<u8>) -> Result<(), DeframingError> {
-    return match reader.read_to_end(body) {
-        Ok(_) => Ok(()),
-        Err(err) => Err(err.into())
-    };
+impl Deframe for BodyDeframer {
+    type Output = Vec<u8>;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
+        match self {
+            BodyDeframer::Sized(deframer) => deframer.read(reader).map_err(|(deframer, err)| (BodyDeframer::Sized(deframer), err)),
+            BodyDeframer::UntilEOF(deframer) => deframer.read(reader).map_err(|(deframer, err)| (BodyDeframer::UntilEOF(deframer), err)),
+            BodyDeframer::Chunked(deframer) => deframer.read(reader).map_err(|(deframer, err)| (BodyDeframer::Chunked(deframer), err)),
+            BodyDeframer::Empty => Ok(vec![])
+        }
+    }
 }
 
-/// Reads chunks from the given reader. Appends the chunks to the given body.
-/// Data maybe be partially written into body even if an error is encountered.
-fn read_chunked(reader: &mut impl BufRead, body: &mut Vec<u8>, state: &mut ChunkState) -> Result<(), DeframingError> {
-    loop {
-        match state {
-            ChunkState::Size(line_deframer) => {
-                let line = line_deframer.read(reader)?;
-                let size = usize::from_str_radix(&line, 16).map_err(|_| DeframingError::InvalidChunkSize)?;
-                if size > MAX_BODY_SIZE {
-                    return Err(DeframingError::ContentLengthTooLarge);
+pub struct SizedDeframer {
+    body: Vec<u8>,
+    pos: usize,
+}
+
+impl SizedDeframer {
+    fn new(size: usize) -> SizedDeframer {
+        SizedDeframer { body: vec![0; size], pos: 0 }
+    }
+}
+
+impl Deframe for SizedDeframer {
+    type Output = Vec<u8>;
+
+    fn read(mut self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
+        let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
+
+        loop {
+            let len = self.body.len();
+            let mut buf = &mut self.body[self.pos..len];
+
+            match reader.read(&mut buf) {
+                Ok(0) if buf.len() != 0 => return Err((self, Error::from(ErrorKind::UnexpectedEof).into())),
+                Ok(amt) => {
+                    self.pos += amt;
+                    if self.pos == len {
+                        return Ok(self.body);
+                    }
                 }
-                *state = ChunkState::Body(0, Some(vec![0; size]));
-                continue;
+                Err(err) => return Err((self, err.into()))
             }
-            ChunkState::Body(pos, chunk) => {
-                let chunk_mut = chunk.as_mut().unwrap();
-                read_sized(reader, chunk_mut, pos)?;
-                let is_last = chunk_mut.is_empty();
-                body.append(chunk_mut);
-                *state = ChunkState::TailingCrlf(CrlfLineDeframer::new(), is_last);
-                continue;
-            }
-            ChunkState::TailingCrlf(line_deframer, is_last) => {
-                let line = line_deframer.read(reader)?;
-                let is_last = *is_last;
-                *state = ChunkState::Size(CrlfLineDeframer::new());
-                if !line.is_empty() {
-                    return Err(DeframingError::BadSyntax);
-                } else if is_last {
-                    return Ok(());
+        }
+    }
+}
+
+pub struct UntilEOFDeframer {
+    body: Vec<u8>
+}
+
+impl UntilEOFDeframer {
+    fn new() -> UntilEOFDeframer {
+        UntilEOFDeframer { body: vec![] }
+    }
+}
+
+impl Deframe for UntilEOFDeframer {
+    type Output = Vec<u8>;
+
+    fn read(mut self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
+
+        match reader.read_to_end(&mut self.body) {
+            Ok(_) => Ok(self.body),
+            Err(err) => Err((self, err.into()))
+        }
+    }
+}
+
+pub struct ChunkDeframer {
+    body: Vec<u8>,
+    state: ChunkedBodyState,
+}
+
+enum ChunkedBodyState {
+    Size(ChunkSizeDeframer),
+    Data(SizedDeframer),
+    TailingCrlf(TailingCrlfDeframer, bool),
+}
+
+impl ChunkDeframer {
+    fn new() -> ChunkDeframer {
+        ChunkDeframer { body: vec![], state: ChunkedBodyState::Size(ChunkSizeDeframer::new()) }
+    }
+
+    fn size_state(deframer: ChunkSizeDeframer, body: Vec<u8>) -> ChunkDeframer {
+        ChunkDeframer { state: ChunkedBodyState::Size(deframer), body }
+    }
+
+    fn data_state(deframer: SizedDeframer, body: Vec<u8>) -> ChunkDeframer {
+        ChunkDeframer { state: ChunkedBodyState::Data(deframer), body }
+    }
+
+    fn tailing_crlf_state(deframer: TailingCrlfDeframer, is_last: bool, body: Vec<u8>) -> ChunkDeframer {
+        ChunkDeframer { state: ChunkedBodyState::TailingCrlf(deframer, is_last), body }
+    }
+}
+
+struct ChunkSizeDeframer {
+    inner: CrlfLineDeframer
+}
+
+impl ChunkSizeDeframer {
+    fn new() -> ChunkSizeDeframer {
+        ChunkSizeDeframer { inner: CrlfLineDeframer::new() }
+    }
+}
+
+impl Deframe for ChunkSizeDeframer {
+    type Output = usize;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        let line = self.inner.read(reader)
+            .map_err(|(deframer, err)| (ChunkSizeDeframer { inner: deframer }, err))?;
+
+        usize::from_str_radix(&line, 16)
+            .map_err(|_| DeframingError::InvalidChunkSize)
+            .and_then(|size|
+                if size > MAX_BODY_SIZE {
+                    Err(DeframingError::ContentLengthTooLarge)
                 } else {
-                    continue;
+                    Ok(size)
+                })
+            .map_err(|err| (ChunkSizeDeframer::new(), err))
+    }
+}
+
+struct TailingCrlfDeframer {
+    inner: CrlfLineDeframer
+}
+
+impl TailingCrlfDeframer {
+    fn new() -> TailingCrlfDeframer {
+        TailingCrlfDeframer { inner: CrlfLineDeframer::new() }
+    }
+}
+
+impl Deframe for TailingCrlfDeframer {
+    type Output = ();
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        let line = self.inner.read(reader)
+            .map_err(|(deframer, err)| (TailingCrlfDeframer { inner: deframer }, err))?;
+
+        if line.is_empty() {
+            Ok(())
+        } else {
+            Err((TailingCrlfDeframer::new(), DeframingError::BadSyntax))
+        }
+    }
+}
+
+
+impl Deframe for ChunkDeframer {
+    type Output = Vec<u8>;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
+
+        let ChunkDeframer { mut state, mut body } = self;
+        loop {
+            state = match state {
+                ChunkedBodyState::Size(deframer) => {
+                    match deframer.read(&mut reader) {
+                        Ok(size) => ChunkedBodyState::Data(SizedDeframer::new(size)),
+                        Err((deframer, err)) => return Err((ChunkDeframer::size_state(deframer, body), err))
+                    }
+                }
+                ChunkedBodyState::Data(deframer) => {
+                    match deframer.read(&mut reader) {
+                        Ok(ref mut chunk) => {
+                            let is_last = chunk.is_empty();
+                            body.append(chunk);
+                            ChunkedBodyState::TailingCrlf(TailingCrlfDeframer::new(), is_last)
+                        }
+                        Err((deframer, err)) => return Err((ChunkDeframer::data_state(deframer, body), err))
+                    }
+                }
+                ChunkedBodyState::TailingCrlf(deframer, is_last) => {
+                    match deframer.read(&mut reader) {
+                        Ok(()) if is_last => return Ok(body),
+                        Ok(()) => ChunkedBodyState::Size(ChunkSizeDeframer::new()),
+                        Err((deframer, err)) => return Err((ChunkDeframer::tailing_crlf_state(deframer, is_last, body), err))
+                    }
                 }
             }
         }
@@ -154,34 +244,44 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::deframe::body_deframer::BodyDeframer;
+    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, ContentLengthTooLarge};
     use crate::header_map;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
     fn test_sized(size: usize, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
-        let body_reader = BodyDeframer::new(false, &header_map![("content-length", size.to_string())]).unwrap();
-        test(body_reader, tests);
+        let deframer = BodyDeframer::new(false, &header_map![("content-length", size.to_string())]).unwrap();
+        test(deframer, tests);
     }
 
     fn test_until_eof(tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
-        let body_reader = BodyDeframer::new(true, &header_map![]).unwrap();
-        test(body_reader, tests);
+        let deframer = BodyDeframer::new(true, &header_map![]).unwrap();
+        test(deframer, tests);
     }
 
     fn test_chunked(tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
-        let body_reader = BodyDeframer::new(false, &header_map![("transfer-encoding", "chunked")]).unwrap();
-        test(body_reader, tests);
+        let deframer = BodyDeframer::new(false, &header_map![("transfer-encoding", "chunked")]).unwrap();
+        test(deframer, tests);
     }
 
-    fn test(mut body_reader: BodyDeframer, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
+    fn test(mut deframer: BodyDeframer, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
         let mut reader = MockReader::from_bytes(vec![]);
         reader.return_would_block_when_empty = true;
         let mut reader = BufReader::new(reader);
+        let mut deframer = Some(deframer);
         for (new_data, expected_result) in tests {
             reader.get_mut().data.extend(new_data.into_iter().map(|v| v.to_vec()));
-            let actual_result = body_reader.read(&mut reader);
-            assert_eq!(format!("{:?}", actual_result), format!("{:?}", expected_result));
+            deframer = match (deframer.take().unwrap().read(&mut reader), expected_result) {
+                (Err((new, act)), Err(exp)) => {
+                    assert_eq!(format!("{:?}", act), format!("{:?}", exp));
+                    Some(new)
+                }
+                (act, exp) => {
+                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
+                    None
+                }
+            }
         }
     }
 
@@ -189,6 +289,7 @@ mod tests {
         let reader = EndlessMockReader::from_bytes(start, sequence);
         let mut reader = BufReader::new(reader);
         let actual = body_reader.read(&mut reader);
+        let actual = actual.map_err(|(_, err)| err);
         assert_eq!(format!("{:?}", actual), format!("{:?}", expected));
     }
 
@@ -200,10 +301,9 @@ mod tests {
     }
 
     #[test]
-    fn multiple_sized_bodies() {
+    fn stops_reading_once_size_is_reached() {
         test_sized(11, vec![
             (vec![b"hello worldhello world"], Ok(b"hello world".to_vec())),
-            (vec![], Ok(vec![]))
         ])
     }
 
@@ -371,14 +471,9 @@ mod tests {
     }
 
     #[test]
-    fn multiple_chunked_bodies() {
+    fn stops_reading_at_empty_chunk() {
         test_chunked(vec![
-            (vec![b"5\r\n"], Err(Error::from(ErrorKind::WouldBlock).into())),
-            (vec![b"hello\r\n"], Err(Error::from(ErrorKind::WouldBlock).into())),
-            (vec![b"0\r\n\r\n"], Ok(b"hello".to_vec())),
-            (vec![b"7\r\n"], Ok(vec![])),
-            (vec![b"goodbye\r\n"], Ok(vec![])),
-            (vec![b"0\r\n\r\n"], Ok(vec![])),
+            (vec![b"5\r\n", b"hello\r\n", b"0\r\n\r\n", b"7\r\n", b"goodbye\r\n", b"0\r\n\r\n"], Ok(b"hello".to_vec())),
         ]);
     }
 

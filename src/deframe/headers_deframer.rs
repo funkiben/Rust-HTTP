@@ -1,18 +1,19 @@
 use std::io::BufRead;
 
 use crate::common::header::{Header, HeaderMap, HeaderMapOps};
-use crate::header_map;
 use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+use crate::deframe::deframe::Deframe;
 use crate::deframe::error::DeframingError;
-use crate::deframe::error_take::ErrorTake;
+use crate::deframe::error_take::ReadExt;
+use crate::header_map;
 
 /// The max number of bytes read by a headers deframer.
 const MAX_HEADERS_SIZE: usize = 4096;
 
 /// Deframer for headers.
 pub struct HeadersDeframer {
-    line_deframer: CrlfLineDeframer,
-    headers: Option<HeaderMap>,
+    header_deframer: HeaderDeframer,
+    headers: HeaderMap,
     read: usize,
 }
 
@@ -20,27 +21,57 @@ impl HeadersDeframer {
     /// Creates a new headers deframer.
     pub fn new() -> HeadersDeframer {
         HeadersDeframer {
-            line_deframer: CrlfLineDeframer::new(),
-            headers: Some(header_map![]),
+            header_deframer: HeaderDeframer::new(),
+            headers: header_map![],
             read: 0,
         }
     }
+}
 
-    /// Reads from the given reader and tries to deframe headers.
-    pub fn read(&mut self, reader: &mut impl BufRead) -> Result<HeaderMap, DeframingError> {
+impl Deframe for HeadersDeframer {
+    type Output = HeaderMap;
+
+    fn read(mut self, reader: &mut impl BufRead) -> Result<HeaderMap, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_HEADERS_SIZE - self.read) as u64);
 
         loop {
-            let line = self.line_deframer.read(&mut reader)?;
-
-            if line.is_empty() {
-                return Ok(self.headers.replace(header_map![]).unwrap());
+            match self.header_deframer.read(&mut reader) {
+                Ok(None) => return Ok(self.headers),
+                Ok(Some((header, value))) => {
+                    self.read += header.as_str().len() + value.len() + 2;
+                    self.headers.add_header(header, value);
+                    self.header_deframer = HeaderDeframer::new();
+                }
+                Err((header_deframer, err)) => {
+                    self.header_deframer = header_deframer;
+                    return Err((self, err));
+                }
             }
+        }
+    }
+}
 
-            self.read += line.len();
+struct HeaderDeframer {
+    line_deframer: CrlfLineDeframer
+}
 
-            let (header, value) = parse_header(line)?;
-            self.headers.as_mut().unwrap().add_header(header, value);
+impl HeaderDeframer {
+    fn new() -> HeaderDeframer {
+        HeaderDeframer { line_deframer: CrlfLineDeframer::new() }
+    }
+}
+
+impl Deframe for HeaderDeframer {
+    type Output = Option<(Header, String)>;
+
+    fn read(mut self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        match self.line_deframer.read(reader) {
+            Ok(line) if line.is_empty() => return Ok(None),
+            Ok(line) => parse_header(line).map(|val| Some(val)).map_err(|err| (HeaderDeframer::new(), err)),
+            Err((line_deframer, err)) => {
+                self.line_deframer = line_deframer;
+                return Err((self, err));
+            }
         }
     }
 }
@@ -61,23 +92,33 @@ mod tests {
 
     use crate::common::header;
     use crate::common::header::HeaderMap;
-    use crate::header_map;
+    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::BadSyntax;
     use crate::deframe::headers_deframer::HeadersDeframer;
+    use crate::header_map;
     use crate::util::mock::MockReader;
 
     fn test_read(tests: Vec<(Vec<&[u8]>, Result<HeaderMap, DeframingError>)>) {
         let mut reader = MockReader::from_bytes(vec![]);
         reader.return_would_block_when_empty = true;
         let mut reader = BufReader::new(reader);
-        let mut headers_reader = HeadersDeframer::new();
+        let mut deframer = Some(HeadersDeframer::new());
         for (new_data, expected_result) in tests {
             reader.get_mut().data.extend(new_data.into_iter().map(|v| v.to_vec()));
-            let actual_result = headers_reader.read(&mut reader);
-            match (actual_result, expected_result) {
-                (Ok(act), Ok(exp)) => assert_eq!(act, exp),
-                (act, exp) => assert_eq!(format!("{:?}", act), format!("{:?}", exp))
+            deframer = match (deframer.take().unwrap().read(&mut reader), expected_result) {
+                (Err((new, act)), Err(exp)) => {
+                    assert_eq!(format!("{:?}", act), format!("{:?}", exp));
+                    Some(new)
+                }
+                (Ok(act), Ok(exp)) => {
+                    assert_eq!(act, exp);
+                    None
+                }
+                (act, exp) => {
+                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
+                    None
+                }
             }
         }
     }

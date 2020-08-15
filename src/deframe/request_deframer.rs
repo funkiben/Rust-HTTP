@@ -1,30 +1,61 @@
 use std::io::BufRead;
 
-use crate::common::header::HeaderMap;
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
-use crate::header_map;
-use crate::deframe::error::{DeframingError};
+use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+use crate::deframe::deframe::Deframe;
+use crate::deframe::error::DeframingError;
 use crate::deframe::message_deframer::MessageDeframer;
 
-pub struct RequestDeframer<T> {
-    inner: MessageDeframer<T, Request, DeframingError>
+pub struct RequestDeframer {
+    inner: MessageDeframer<FirstLineDeframer, (Method, String)>
 }
 
-impl<T: BufRead> RequestDeframer<T> {
-    pub fn new(inner: T) -> RequestDeframer<T> {
+impl RequestDeframer {
+    pub fn new() -> RequestDeframer {
         RequestDeframer {
-            inner: MessageDeframer::new(inner, false, get_default, parse_first_line, set_headers_and_body)
+            inner: MessageDeframer::new(FirstLineDeframer::new(), false)
         }
     }
+}
 
-    pub fn read(&mut self) -> Result<Request, DeframingError> {
-        self.inner.read()
+impl Deframe for RequestDeframer {
+    type Output = Request;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        match self.inner.read(reader) {
+            Ok(((method, uri), headers, body)) => Ok(Request { method, uri, headers, body }),
+            Err((inner, err)) => Err((Self { inner }, err))
+        }
     }
 }
 
-fn parse_first_line(request: &mut Request, line: String) -> Result<(), DeframingError> {
+struct FirstLineDeframer {
+    line_deframer: CrlfLineDeframer
+}
+
+impl FirstLineDeframer {
+    fn new() -> FirstLineDeframer {
+        FirstLineDeframer { line_deframer: CrlfLineDeframer::new() }
+    }
+}
+
+impl Deframe for FirstLineDeframer {
+    type Output = (Method, String);
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        match self.line_deframer.read(reader) {
+            Ok(line) => {
+                let (method, uri) = parse_first_line(line).map_err(|err| (Self::new(), err))?;
+                Ok((method, uri))
+            }
+            Err((line_deframer, err)) => Err((Self { line_deframer, ..self }, err))
+        }
+    }
+}
+
+fn parse_first_line(line: String) -> Result<(Method, String), DeframingError> {
     let mut split = line.split(" ");
 
     let method_raw = split.next().ok_or(DeframingError::BadSyntax)?;
@@ -35,31 +66,13 @@ fn parse_first_line(request: &mut Request, line: String) -> Result<(), Deframing
         return Err(DeframingError::WrongHttpVersion.into());
     }
 
-    request.method = parse_method(method_raw)?;
-    request.uri = uri.to_string();
-
-    Ok(())
-}
-
-fn set_headers_and_body(request: &mut Request, headers: HeaderMap, body: Vec<u8>) {
-    request.headers = headers;
-    request.body = body;
+    Ok((parse_method(method_raw)?, uri.to_string()))
 }
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
 fn parse_method(raw: &str) -> Result<Method, DeframingError> {
     Method::try_from_str(raw).ok_or_else(|| DeframingError::UnrecognizedMethod)
 }
-
-fn get_default() -> Request {
-    Request {
-        uri: String::new(),
-        method: Method::GET,
-        headers: header_map![],
-        body: vec![],
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -68,16 +81,18 @@ mod tests {
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
     use crate::common::request::Request;
-    use crate::header_map;
-    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion, UnrecognizedMethod};
-    use crate::deframe::request_deframer::RequestDeframer;
-    use crate::util::mock::MockReader;
+    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnrecognizedMethod, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
+    use crate::deframe::request_deframer::RequestDeframer;
+    use crate::header_map;
+    use crate::util::mock::MockReader;
+    use crate::deframe::deframe::Deframe;
 
     fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, DeframingError>) {
         let reader = MockReader::from_strs(data);
-        let reader = BufReader::new(reader);
-        let actual_result = RequestDeframer::new(reader).read();
+        let mut reader = BufReader::new(reader);
+        let actual_result = RequestDeframer::new().read(&mut reader);
+        let actual_result = actual_result.map_err(|(_, err)| err);
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))

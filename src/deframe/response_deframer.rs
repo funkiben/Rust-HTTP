@@ -1,30 +1,61 @@
 use std::io::BufRead;
 
-use crate::common::{HTTP_VERSION, status};
-use crate::common::header::HeaderMap;
+use crate::common::{HTTP_VERSION};
 use crate::common::response::Response;
 use crate::common::status::Status;
-use crate::header_map;
-use crate::deframe::error::{DeframingError};
+use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+use crate::deframe::deframe::Deframe;
+use crate::deframe::error::DeframingError;
 use crate::deframe::message_deframer::MessageDeframer;
 
-pub struct ResponseDeframer<T> {
-    inner: MessageDeframer<T, Response, DeframingError>
+pub struct ResponseDeframer {
+    inner: MessageDeframer<FirstLineDeframer, Status>
 }
 
-impl<T: BufRead> ResponseDeframer<T> {
-    pub fn new(inner: T) -> ResponseDeframer<T> {
+impl ResponseDeframer {
+    pub fn new() -> ResponseDeframer {
         ResponseDeframer {
-            inner: MessageDeframer::new(inner, true, get_default, parse_first_line, set_headers_and_body)
+            inner: MessageDeframer::new(FirstLineDeframer::new(), true)
         }
     }
+}
 
-    pub fn read(&mut self) -> Result<Response, DeframingError> {
-        self.inner.read()
+impl Deframe for ResponseDeframer {
+    type Output = Response;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        match self.inner.read(reader) {
+            Ok((status, headers, body)) => Ok(Response { status, headers, body }),
+            Err((inner, err)) => Err((Self { inner }, err))
+        }
     }
 }
 
-fn parse_first_line(response: &mut Response, line: String) -> Result<(), DeframingError> {
+struct FirstLineDeframer {
+    line_deframer: CrlfLineDeframer
+}
+
+impl FirstLineDeframer {
+    fn new() -> FirstLineDeframer {
+        FirstLineDeframer { line_deframer: CrlfLineDeframer::new() }
+    }
+}
+
+impl Deframe for FirstLineDeframer {
+    type Output = Status;
+
+    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+        match self.line_deframer.read(reader) {
+            Ok(line) => {
+                let status = parse_first_line(line).map_err(|err| (Self::new(), err))?;
+                Ok(status)
+            }
+            Err((line_deframer, err)) => Err((Self { line_deframer }, err))
+        }
+    }
+}
+
+fn parse_first_line(line: String) -> Result<Status, DeframingError> {
     let mut split = line.split(" ");
 
     let http_version = split.next().ok_or(DeframingError::BadSyntax)?;
@@ -34,28 +65,13 @@ fn parse_first_line(response: &mut Response, line: String) -> Result<(), Deframi
         return Err(DeframingError::WrongHttpVersion.into());
     }
 
-    response.status = parse_status(status_code)?;
-
-    Ok(())
-}
-
-fn set_headers_and_body(request: &mut Response, headers: HeaderMap, body: Vec<u8>) {
-    request.headers = headers;
-    request.body = body;
+    parse_status(status_code)
 }
 
 /// Parses the status code.
 fn parse_status(code: &str) -> Result<Status, DeframingError> {
     let code = code.parse().map_err(|_| DeframingError::InvalidStatusCode)?;
     Status::from_code(code).ok_or(DeframingError::InvalidStatusCode)
-}
-
-fn get_default() -> Response {
-    Response {
-        status: status::OK,
-        headers: header_map![],
-        body: vec![],
-    }
 }
 
 #[cfg(test)]
@@ -65,15 +81,17 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, WrongHttpVersion, InvalidStatusCode};
+    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, InvalidStatusCode, Reading, WrongHttpVersion};
+    use crate::deframe::error::DeframingError;
     use crate::deframe::response_deframer::ResponseDeframer;
     use crate::util::mock::MockReader;
-    use crate::deframe::error::DeframingError;
+    use crate::deframe::deframe::Deframe;
 
     fn test_with_eof(data: Vec<&str>, expected_result: Result<Response, DeframingError>) {
         let reader = MockReader::from_strs(data);
-        let reader = BufReader::new(reader);
-        let actual_result = ResponseDeframer::new(reader).read();
+        let mut reader = BufReader::new(reader);
+        let actual_result = ResponseDeframer::new().read(&mut reader);
+        let actual_result = actual_result.map_err(|(_, err)| err);
         match (expected_result, actual_result) {
             (Ok(exp), Ok(act)) => assert_eq!(exp, act),
             (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))
