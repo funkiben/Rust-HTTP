@@ -1,6 +1,6 @@
 use std::io::BufRead;
 
-use crate::common::{HTTP_VERSION};
+use crate::common::HTTP_VERSION;
 use crate::common::response::Response;
 use crate::common::status::Status;
 use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
@@ -81,11 +81,11 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
+    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, InvalidStatusCode, Reading, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::response_deframer::ResponseDeframer;
     use crate::util::mock::MockReader;
-    use crate::deframe::deframe::Deframe;
 
     fn test_with_eof(data: Vec<&str>, expected_result: Result<Response, DeframingError>) {
         let reader = MockReader::from_strs(data);

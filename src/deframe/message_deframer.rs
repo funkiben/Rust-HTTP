@@ -84,7 +84,7 @@ mod tests {
                 assert_eq!(actual_first_line, expected_first_line);
                 assert_eq!(actual_headers, expected_headers);
                 assert_eq!(actual_body, expected_body);
-            },
+            }
             (actual, expected) =>
                 assert_eq!(format!("{:?}", actual), format!("{:?}", expected)),
         }

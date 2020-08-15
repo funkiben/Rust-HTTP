@@ -81,12 +81,12 @@ mod tests {
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
     use crate::common::request::Request;
+    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnrecognizedMethod, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::request_deframer::RequestDeframer;
     use crate::header_map;
     use crate::util::mock::MockReader;
-    use crate::deframe::deframe::Deframe;
 
     fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, DeframingError>) {
         let reader = MockReader::from_strs(data);

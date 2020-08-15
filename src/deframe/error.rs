@@ -18,7 +18,7 @@ pub enum DeframingError {
     /// Method is unrecognized.
     UnrecognizedMethod,
     /// Invalid status code.
-    InvalidStatusCode
+    InvalidStatusCode,
 }
 
 impl From<std::io::Error> for DeframingError {

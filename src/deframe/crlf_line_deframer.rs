@@ -51,10 +51,10 @@ mod tests {
     use std::io::{BufReader, Error, ErrorKind};
 
     use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
+    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, Reading};
     use crate::util::mock::MockReader;
-    use crate::deframe::deframe::Deframe;
 
     fn test(tests: Vec<(Vec<&[u8]>, Result<&str, DeframingError>)>) {
         let mut reader = MockReader::from_bytes(vec![]);
@@ -70,9 +70,9 @@ mod tests {
                 (Err((new, act)), Err(exp)) => {
                     assert_eq!(format!("{:?}", act), format!("{:?}", exp));
                     Some(new)
-                },
+                }
                 (act, exp) => {
-                    assert_eq!(format!("{:?}", act.map_err(|(_ ,err)| err)), format!("{:?}", exp));
+                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
                     None
                 }
             };

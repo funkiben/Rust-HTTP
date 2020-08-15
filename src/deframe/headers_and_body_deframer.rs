@@ -4,8 +4,8 @@ use crate::common::header::HeaderMap;
 use crate::deframe::body_deframer::BodyDeframer;
 use crate::deframe::deframe::Deframe;
 use crate::deframe::error::DeframingError;
+use crate::deframe::headers_and_body_deframer::HeadersAndBodyDeframer::{Body, Headers};
 use crate::deframe::headers_deframer::HeadersDeframer;
-use crate::deframe::headers_and_body_deframer::HeadersAndBodyDeframer::{Headers, Body};
 
 /// The state of the headers and body deframer.
 pub enum HeadersAndBodyDeframer {
@@ -33,7 +33,7 @@ impl Deframe for HeadersAndBodyDeframer {
                         let body_deframer = BodyDeframer::new(read_body_if_no_content_length, &headers)
                             .map_err(|err| (Self::new(read_body_if_no_content_length), err))?;
                         Body(body_deframer, headers).read(reader)
-                    },
+                    }
                     Err((deframer, err)) => Err((Headers(deframer, read_body_if_no_content_length), err))
                 }
             }
