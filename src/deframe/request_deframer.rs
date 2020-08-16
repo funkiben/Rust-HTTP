@@ -72,18 +72,16 @@ fn parse_method(raw: &str) -> Result<Method, DeframingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{ Error, ErrorKind};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
     use crate::common::request::Request;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnrecognizedMethod, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::request_deframer::RequestDeframer;
     use crate::deframe::test_util;
     use crate::header_map;
-    use crate::util::mock::MockReader;
 
     fn test_with_eof(data: Vec<&str>, expected: Result<Request, DeframingError>) {
         test_util::test_with_eof(RequestDeframer::new(), data, expected);

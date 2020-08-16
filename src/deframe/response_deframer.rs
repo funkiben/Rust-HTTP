@@ -72,17 +72,15 @@ fn parse_status(code: &str) -> Result<Status, DeframingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{ Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, InvalidStatusCode, Reading, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::response_deframer::ResponseDeframer;
     use crate::deframe::test_util;
-    use crate::util::mock::MockReader;
 
     fn test_with_eof(data: Vec<&str>, expected: Result<Response, DeframingError>) {
         test_util::test_with_eof(ResponseDeframer::new(), data, expected);

@@ -47,16 +47,14 @@ fn map_unexpected_eof<T, E>(res: Result<T, (E, DeframingError)>) -> Result<T, (E
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
     use crate::deframe::message_deframer::MessageDeframer;
     use crate::deframe::test_util;
-    use crate::util::mock::{EndlessMockReader, MockReader};
 
     type Message = (String, HeaderMap, Vec<u8>);
     type Deframer = MessageDeframer<CrlfLineDeframer, String>;

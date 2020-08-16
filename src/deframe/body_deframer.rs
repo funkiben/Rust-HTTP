@@ -229,15 +229,13 @@ fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{ Error, ErrorKind};
 
     use crate::deframe::body_deframer::BodyDeframer;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, ContentLengthTooLarge};
     use crate::deframe::test_util;
     use crate::header_map;
-    use crate::util::mock::EndlessMockReader;
 
     fn test_sized(size: usize, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
         let deframer = BodyDeframer::new(false, &header_map![("content-length", size.to_string())]).unwrap();
