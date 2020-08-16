@@ -28,9 +28,7 @@ impl HeadersDeframer {
     }
 }
 
-impl Deframe for HeadersDeframer {
-    type Output = HeaderMap;
-
+impl Deframe<HeaderMap> for HeadersDeframer {
     fn read(mut self, reader: &mut impl BufRead) -> Result<HeaderMap, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_HEADERS_SIZE - self.read) as u64);
 
@@ -61,10 +59,8 @@ impl HeaderDeframer {
     }
 }
 
-impl Deframe for HeaderDeframer {
-    type Output = Option<(Header, String)>;
-
-    fn read(mut self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Option<(Header, String)>> for HeaderDeframer {
+    fn read(mut self, reader: &mut impl BufRead) -> Result<Option<(Header, String)>, (Self, DeframingError)> {
         match self.line_deframer.read(reader) {
             Ok(line) if line.is_empty() => return Ok(None),
             Ok(line) => parse_header(line).map(|val| Some(val)).map_err(|err| (HeaderDeframer::new(), err)),
@@ -88,39 +84,18 @@ fn parse_header(raw: String) -> Result<(Header, String), DeframingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::common::header;
     use crate::common::header::HeaderMap;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::BadSyntax;
     use crate::deframe::headers_deframer::HeadersDeframer;
+    use crate::deframe::test_util::test_blocking;
     use crate::header_map;
-    use crate::util::mock::MockReader;
 
     fn test_read(tests: Vec<(Vec<&[u8]>, Result<HeaderMap, DeframingError>)>) {
-        let mut reader = MockReader::from_bytes(vec![]);
-        reader.return_would_block_when_empty = true;
-        let mut reader = BufReader::new(reader);
-        let mut deframer = Some(HeadersDeframer::new());
-        for (new_data, expected_result) in tests {
-            reader.get_mut().data.extend(new_data.into_iter().map(|v| v.to_vec()));
-            deframer = match (deframer.take().unwrap().read(&mut reader), expected_result) {
-                (Err((new, act)), Err(exp)) => {
-                    assert_eq!(format!("{:?}", act), format!("{:?}", exp));
-                    Some(new)
-                }
-                (Ok(act), Ok(exp)) => {
-                    assert_eq!(act, exp);
-                    None
-                }
-                (act, exp) => {
-                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
-                    None
-                }
-            }
-        }
+        test_blocking(HeadersDeframer::new(), tests)
     }
 
     #[test]

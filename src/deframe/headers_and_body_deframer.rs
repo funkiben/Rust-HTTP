@@ -22,9 +22,7 @@ impl HeadersAndBodyDeframer {
     }
 }
 
-impl Deframe for HeadersAndBodyDeframer {
-    type Output = (HeaderMap, Vec<u8>);
-
+impl Deframe<(HeaderMap, Vec<u8>)> for HeadersAndBodyDeframer {
     fn read(self, reader: &mut impl BufRead) -> Result<(HeaderMap, Vec<u8>), (Self, DeframingError)> {
         match self {
             Headers(deframer, read_body_if_no_content_length) => {

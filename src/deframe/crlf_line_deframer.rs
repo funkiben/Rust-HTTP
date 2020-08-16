@@ -19,9 +19,7 @@ impl CrlfLineDeframer {
     }
 }
 
-impl Deframe for CrlfLineDeframer {
-    type Output = String;
-
+impl Deframe<String> for CrlfLineDeframer {
     fn read(mut self, reader: &mut impl BufRead) -> Result<String, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_LINE_SIZE - self.line.len()) as u64);
 
@@ -48,35 +46,18 @@ fn read_crlf_line(reader: &mut impl BufRead, line: &mut String) -> Result<(), De
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
-    use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
-    use crate::deframe::error::DeframingError::{BadSyntax, Reading};
-    use crate::util::mock::MockReader;
+    use crate::deframe::error::DeframingError::BadSyntax;
+    use crate::deframe::test_util;
 
     fn test(tests: Vec<(Vec<&[u8]>, Result<&str, DeframingError>)>) {
-        let mut reader = MockReader::from_bytes(vec![]);
-        reader.return_would_block_when_empty = true;
-        let mut reader = BufReader::new(reader);
-
-        let mut deframer = Some(CrlfLineDeframer::new());
-
-        for (new_data, expected_result) in tests {
-            reader.get_mut().data.extend(new_data.into_iter().map(|v| v.to_vec()));
-
-            deframer = match (deframer.take().unwrap().read(&mut reader), expected_result) {
-                (Err((new, act)), Err(exp)) => {
-                    assert_eq!(format!("{:?}", act), format!("{:?}", exp));
-                    Some(new)
-                }
-                (act, exp) => {
-                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
-                    None
-                }
-            };
-        }
+        let tests = tests.into_iter()
+            .map(|(data, exp)| (data, exp.map(|s| s.to_string())))
+            .collect();
+        test_util::test_blocking(CrlfLineDeframer::new(), tests);
     }
 
     #[test]

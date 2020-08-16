@@ -20,10 +20,8 @@ impl ResponseDeframer {
     }
 }
 
-impl Deframe for ResponseDeframer {
-    type Output = Response;
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Response> for ResponseDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<Response, (Self, DeframingError)> {
         match self.inner.read(reader) {
             Ok((status, headers, body)) => Ok(Response { status, headers, body }),
             Err((inner, err)) => Err((Self { inner }, err))
@@ -41,10 +39,8 @@ impl FirstLineDeframer {
     }
 }
 
-impl Deframe for FirstLineDeframer {
-    type Output = Status;
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Status> for FirstLineDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<Status, (Self, DeframingError)> {
         match self.line_deframer.read(reader) {
             Ok(line) => {
                 let status = parse_first_line(line).map_err(|err| (Self::new(), err))?;
@@ -85,17 +81,11 @@ mod tests {
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, InvalidStatusCode, Reading, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::response_deframer::ResponseDeframer;
+    use crate::deframe::test_util;
     use crate::util::mock::MockReader;
 
-    fn test_with_eof(data: Vec<&str>, expected_result: Result<Response, DeframingError>) {
-        let reader = MockReader::from_strs(data);
-        let mut reader = BufReader::new(reader);
-        let actual_result = ResponseDeframer::new().read(&mut reader);
-        let actual_result = actual_result.map_err(|(_, err)| err);
-        match (expected_result, actual_result) {
-            (Ok(exp), Ok(act)) => assert_eq!(exp, act),
-            (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))
-        }
+    fn test_with_eof(data: Vec<&str>, expected: Result<Response, DeframingError>) {
+        test_util::test_with_eof(ResponseDeframer::new(), data, expected);
     }
 
     #[test]

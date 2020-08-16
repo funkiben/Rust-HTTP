@@ -16,5 +16,8 @@ mod headers_deframer;
 mod crlf_line_deframer;
 /// Abstract deframer for generic HTTP messages.
 mod message_deframer;
-
+/// Generic trait for deframing data.
 mod deframe;
+
+#[cfg(test)]
+mod test_util;

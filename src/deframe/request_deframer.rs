@@ -20,10 +20,8 @@ impl RequestDeframer {
     }
 }
 
-impl Deframe for RequestDeframer {
-    type Output = Request;
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Request> for RequestDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<Request, (Self, DeframingError)> {
         match self.inner.read(reader) {
             Ok(((method, uri), headers, body)) => Ok(Request { method, uri, headers, body }),
             Err((inner, err)) => Err((Self { inner }, err))
@@ -41,10 +39,8 @@ impl FirstLineDeframer {
     }
 }
 
-impl Deframe for FirstLineDeframer {
-    type Output = (Method, String);
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<(Method, String)> for FirstLineDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<(Method, String), (Self, DeframingError)> {
         match self.line_deframer.read(reader) {
             Ok(line) => {
                 let (method, uri) = parse_first_line(line).map_err(|err| (Self::new(), err))?;
@@ -85,18 +81,12 @@ mod tests {
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnrecognizedMethod, WrongHttpVersion};
     use crate::deframe::error::DeframingError;
     use crate::deframe::request_deframer::RequestDeframer;
+    use crate::deframe::test_util;
     use crate::header_map;
     use crate::util::mock::MockReader;
 
-    fn test_with_eof(data: Vec<&str>, expected_result: Result<Request, DeframingError>) {
-        let reader = MockReader::from_strs(data);
-        let mut reader = BufReader::new(reader);
-        let actual_result = RequestDeframer::new().read(&mut reader);
-        let actual_result = actual_result.map_err(|(_, err)| err);
-        match (expected_result, actual_result) {
-            (Ok(exp), Ok(act)) => assert_eq!(exp, act),
-            (exp, act) => assert_eq!(format!("{:?}", exp), format!("{:?}", act))
-        }
+    fn test_with_eof(data: Vec<&str>, expected: Result<Request, DeframingError>) {
+        test_util::test_with_eof(RequestDeframer::new(), data, expected);
     }
 
     #[test]

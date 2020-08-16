@@ -35,9 +35,7 @@ impl BodyDeframer {
     }
 }
 
-impl Deframe for BodyDeframer {
-    type Output = Vec<u8>;
-
+impl Deframe<Vec<u8>> for BodyDeframer {
     fn read(self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
         match self {
             BodyDeframer::Sized(deframer) => deframer.read(reader).map_err(|(deframer, err)| (BodyDeframer::Sized(deframer), err)),
@@ -59,9 +57,7 @@ impl SizedDeframer {
     }
 }
 
-impl Deframe for SizedDeframer {
-    type Output = Vec<u8>;
-
+impl Deframe<Vec<u8>> for SizedDeframer {
     fn read(mut self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
 
@@ -93,10 +89,8 @@ impl UntilEOFDeframer {
     }
 }
 
-impl Deframe for UntilEOFDeframer {
-    type Output = Vec<u8>;
-
-    fn read(mut self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Vec<u8>> for UntilEOFDeframer {
+    fn read(mut self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
 
         match reader.read_to_end(&mut self.body) {
@@ -145,10 +139,8 @@ impl ChunkSizeDeframer {
     }
 }
 
-impl Deframe for ChunkSizeDeframer {
-    type Output = usize;
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<usize> for ChunkSizeDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<usize, (Self, DeframingError)> {
         let line = self.inner.read(reader)
             .map_err(|(deframer, err)| (ChunkSizeDeframer { inner: deframer }, err))?;
 
@@ -174,10 +166,8 @@ impl TailingCrlfDeframer {
     }
 }
 
-impl Deframe for TailingCrlfDeframer {
-    type Output = ();
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<()> for TailingCrlfDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<(), (Self, DeframingError)> {
         let line = self.inner.read(reader)
             .map_err(|(deframer, err)| (TailingCrlfDeframer { inner: deframer }, err))?;
 
@@ -190,10 +180,8 @@ impl Deframe for TailingCrlfDeframer {
 }
 
 
-impl Deframe for ChunkDeframer {
-    type Output = Vec<u8>;
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl Deframe<Vec<u8>> for ChunkDeframer {
+    fn read(self, reader: &mut impl BufRead) -> Result<Vec<u8>, (Self, DeframingError)> {
         let mut reader = reader.error_take((MAX_BODY_SIZE - self.body.len()) as u64);
 
         let ChunkDeframer { mut state, mut body } = self;
@@ -247,50 +235,27 @@ mod tests {
     use crate::deframe::deframe::Deframe;
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, ContentLengthTooLarge};
+    use crate::deframe::test_util;
     use crate::header_map;
-    use crate::util::mock::{EndlessMockReader, MockReader};
+    use crate::util::mock::EndlessMockReader;
 
     fn test_sized(size: usize, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
         let deframer = BodyDeframer::new(false, &header_map![("content-length", size.to_string())]).unwrap();
-        test(deframer, tests);
+        test_util::test_blocking(deframer, tests);
     }
 
     fn test_until_eof(tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
         let deframer = BodyDeframer::new(true, &header_map![]).unwrap();
-        test(deframer, tests);
+        test_util::test_blocking(deframer, tests);
     }
 
     fn test_chunked(tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
         let deframer = BodyDeframer::new(false, &header_map![("transfer-encoding", "chunked")]).unwrap();
-        test(deframer, tests);
+        test_util::test_blocking(deframer, tests);
     }
 
-    fn test(mut deframer: BodyDeframer, tests: Vec<(Vec<&[u8]>, Result<Vec<u8>, DeframingError>)>) {
-        let mut reader = MockReader::from_bytes(vec![]);
-        reader.return_would_block_when_empty = true;
-        let mut reader = BufReader::new(reader);
-        let mut deframer = Some(deframer);
-        for (new_data, expected_result) in tests {
-            reader.get_mut().data.extend(new_data.into_iter().map(|v| v.to_vec()));
-            deframer = match (deframer.take().unwrap().read(&mut reader), expected_result) {
-                (Err((new, act)), Err(exp)) => {
-                    assert_eq!(format!("{:?}", act), format!("{:?}", exp));
-                    Some(new)
-                }
-                (act, exp) => {
-                    assert_eq!(format!("{:?}", act.map_err(|(_, err)| err)), format!("{:?}", exp));
-                    None
-                }
-            }
-        }
-    }
-
-    fn test_endless(mut body_reader: BodyDeframer, start: Vec<&[u8]>, sequence: &[u8], expected: Result<Vec<u8>, DeframingError>) {
-        let reader = EndlessMockReader::from_bytes(start, sequence);
-        let mut reader = BufReader::new(reader);
-        let actual = body_reader.read(&mut reader);
-        let actual = actual.map_err(|(_, err)| err);
-        assert_eq!(format!("{:?}", actual), format!("{:?}", expected));
+    fn test_endless(deframer: BodyDeframer, start: Vec<&[u8]>, sequence: &[u8], expected: Result<Vec<u8>, DeframingError>) {
+        test_util::test_endless_bytes(deframer, start, sequence, expected);
     }
 
     #[test]

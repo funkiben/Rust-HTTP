@@ -17,10 +17,8 @@ impl<D, F> MessageDeframer<D, F> {
     }
 }
 
-impl<D: Deframe<Output=F>, F> Deframe for MessageDeframer<D, F> {
-    type Output = (F, HeaderMap, Vec<u8>);
-
-    fn read(self, reader: &mut impl BufRead) -> Result<Self::Output, (Self, DeframingError)> {
+impl<F, D: Deframe<F>> Deframe<(F, HeaderMap, Vec<u8>)> for MessageDeframer<D, F> {
+    fn read(self, reader: &mut impl BufRead) -> Result<(F, HeaderMap, Vec<u8>), (Self, DeframingError)> {
         match self {
             FirstLine(deframer, read_body_if_no_content_length) => {
                 match map_unexpected_eof(deframer.read(reader)) {
@@ -57,37 +55,22 @@ mod tests {
     use crate::deframe::error::DeframingError;
     use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
     use crate::deframe::message_deframer::MessageDeframer;
+    use crate::deframe::test_util;
     use crate::util::mock::{EndlessMockReader, MockReader};
 
-    fn get_message_deframer(read_if_no_content_length: bool) -> MessageDeframer<CrlfLineDeframer, String> {
+    type Message = (String, HeaderMap, Vec<u8>);
+    type Deframer = MessageDeframer<CrlfLineDeframer, String>;
+
+    fn get_message_deframer(read_if_no_content_length: bool) -> Deframer {
         MessageDeframer::new(CrlfLineDeframer::new(), read_if_no_content_length)
     }
 
-    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
-        let reader = MockReader::from_strs(input);
-        let mut reader = BufReader::new(reader);
-        let actual = get_message_deframer(read_if_no_content_length).read(&mut reader);
-        assert_full_result_eq(actual, expected);
+    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<Message, DeframingError>) {
+        test_util::test_with_eof(get_message_deframer(read_if_no_content_length), input, expected);
     }
 
-    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
-        let reader = EndlessMockReader::from_strs(data, endless_data);
-        let mut reader = BufReader::new(reader);
-        let actual = get_message_deframer(read_if_no_content_length).read(&mut reader);
-        assert_full_result_eq(actual, expected);
-    }
-
-    fn assert_full_result_eq(actual: Result<(String, HeaderMap, Vec<u8>), (MessageDeframer<CrlfLineDeframer, String>, DeframingError)>, expected: Result<(String, HeaderMap, Vec<u8>), DeframingError>) {
-        let actual = actual.map_err(|(_, err)| err);
-        match (actual, expected) {
-            (Ok((actual_first_line, actual_headers, actual_body)), Ok((expected_first_line, expected_headers, expected_body))) => {
-                assert_eq!(actual_first_line, expected_first_line);
-                assert_eq!(actual_headers, expected_headers);
-                assert_eq!(actual_body, expected_body);
-            }
-            (actual, expected) =>
-                assert_eq!(format!("{:?}", actual), format!("{:?}", expected)),
-        }
+    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<Message, DeframingError>) {
+        test_util::test_endless_strs(get_message_deframer(read_if_no_content_length), data, endless_data, expected);
     }
 
     #[test]
