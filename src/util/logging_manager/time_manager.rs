@@ -2,6 +2,15 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 use std::time::SystemTime;
 
+const SECONDS_SINCE_JAN_1_2020: u64 = 1577836800;
+const STARTING_YEAR: u64 = 2020;
+const SECONDS_IN_DAY: u64 = 86400;
+const SECONDS_IN_HOUR: u64 = 3600;
+const DAYS_IN_LEAP_YEAR: u64 = 366;
+const DAYS_IN_NON_LEAP_YEAR: u64 = 365;
+const LEAP_YEAR_CALENDAR: [u64; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const NON_LEAP_YEAR_CALENDAR: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
 // returns a String representing the current date and time in UTC
 // string is returned in the format "[YYYY-MM-DD HH:MM:SS]"
 pub fn curr_timestamp() -> String {
@@ -61,29 +70,27 @@ impl DateTime {
         format!("{:04}_{:02}_{:02}", self.year, self.month, self.day)
     }
 
-    // TODO break into smaller functions
-    // TODO pull literals out into constants
     // create a datetime struct from a unix time
     fn from_unix(epoch_diff: u64) -> DateTime {
         // calculate difference from Jan 1, 2020 00:00
-        let epoch_difference = match epoch_diff >= 1577836800 {
-            true => epoch_diff - 1577836800,
+        let epoch_difference = match epoch_diff >= SECONDS_SINCE_JAN_1_2020 {
+            true => epoch_diff - SECONDS_SINCE_JAN_1_2020,
             false => panic!("Time calculated is before 2020!"),
         };
 
         // get difference in days
-        let mut epoch_difference_days = epoch_difference / 86400;
+        let mut epoch_difference_days = epoch_difference / SECONDS_IN_DAY;
 
         // get remaining seconds (less than a day)
-        let second_remaining = epoch_difference - epoch_difference_days * 86400;
+        let second_remaining = epoch_difference - epoch_difference_days * SECONDS_IN_DAY;
 
         // loop over years to find current
-        let mut year: u64 = 2020;
+        let mut year: u64 = STARTING_YEAR;
         loop {
             // check for leap year
-            let days_in_year = match year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                true => 366 as u64,
-                false => 365 as u64,
+            let days_in_year = match utils::is_leap_year(year as u16) {
+                true => DAYS_IN_LEAP_YEAR,
+                false => DAYS_IN_NON_LEAP_YEAR,
             };
 
             if epoch_difference_days > days_in_year {
@@ -123,9 +130,9 @@ impl DateTime {
         };
 
         // calculate hours minutes and seconds from remaining time
-        let hours = second_remaining / 3600;
-        let minutes = (second_remaining - hours * 3600) / 60;
-        let seconds = second_remaining - hours * 3600 - minutes * 60;
+        let hours = second_remaining / SECONDS_IN_HOUR;
+        let minutes = (second_remaining - hours * SECONDS_IN_HOUR) / 60;
+        let seconds = second_remaining - hours * SECONDS_IN_HOUR - minutes * 60;
 
         DateTime {
             year: year as u16,
@@ -150,8 +157,6 @@ impl DateTime {
 impl FromStr for DateTime {
     type Err = DateTimeError;
 
-    // TODO break into smaller functions if possible
-    // TODO pull literals out into constants
     // parse DateTime from string in format YYYY_MM_DD
     fn from_str(date: &str) -> Result<Self, Self::Err> {
         // check length
@@ -193,18 +198,21 @@ impl FromStr for DateTime {
     }
 }
 
-// TODO why does this need to be in a utils module?
 mod utils {
 
-    // TODO pull these out and make constants
     // get an array of day counts for a month in the given year
     pub fn get_month_calendar(year: u16) -> [u64; 12] {
         // check for leap year
-        if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        if is_leap_year(year) {
+            super::LEAP_YEAR_CALENDAR
         } else {
-            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            super::NON_LEAP_YEAR_CALENDAR
         }
+    }
+
+    // check if a year is a leap year
+    pub fn is_leap_year(year: u16) -> bool {
+        return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     }
 }
 
@@ -212,7 +220,11 @@ mod utils {
 mod tests {
     use super::*;
 
-    // TODO add test for time before Jan 1 2020
+    #[test]
+    #[should_panic]
+    fn test_bad_dates() {
+        DateTime::from_unix(1);
+    }
 
     #[test]
     fn test_from_unix_format() {
@@ -257,9 +269,9 @@ mod tests {
         assert_eq!("2020_03_01", DateTime::from_unix(1583020800).format_date());
     }
 
-    // TODO might be good to have a test case for the empty string
     #[test]
     fn test_check_date() {
+        assert_eq!(false, check_date(""));
         assert_eq!(true, check_date(curr_datestamp().as_str()));
         assert_eq!(true, check_date("2020_02_29"));
         assert_eq!(false, check_date("2019_02_29"));
@@ -270,5 +282,13 @@ mod tests {
         assert_eq!(false, check_date("2020_02"));
         assert_eq!(false, check_date("some string"));
         assert_eq!(false, check_date("2020*02&29"));
+    }
+
+    #[test]
+    fn test_leap_year() {
+        assert_eq!(true, utils::is_leap_year(2020));
+        assert_eq!(false, utils::is_leap_year(1900));
+        assert_eq!(true, utils::is_leap_year(2024));
+        assert_eq!(false, utils::is_leap_year(2019));
     }
 }
