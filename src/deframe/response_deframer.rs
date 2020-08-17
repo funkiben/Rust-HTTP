@@ -72,7 +72,7 @@ fn parse_status(code: &str) -> Result<Status, DeframingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{ Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;

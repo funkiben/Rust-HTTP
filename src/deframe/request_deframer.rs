@@ -72,7 +72,7 @@ fn parse_method(raw: &str) -> Result<Method, DeframingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{ Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;

@@ -229,7 +229,7 @@ fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{ Error, ErrorKind};
+    use std::io::{Error, ErrorKind};
 
     use crate::deframe::body_deframer::BodyDeframer;
     use crate::deframe::error::DeframingError;
