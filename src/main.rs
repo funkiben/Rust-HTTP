@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use my_http::common::{header, status};
@@ -37,7 +37,7 @@ fn main() -> Result<(), Error> {
 fn file_router(directory: &'static str) -> Router {
     let mut router = Router::new();
 
-    let cache: Mutex<HashMap<String, Arc<Response>>> = Mutex::new(HashMap::new());
+    let cache: RwLock<HashMap<String, Arc<Response>>> = RwLock::new(HashMap::new());
 
     router.on_prefix("", move |uri, _| {
         let mut path = String::from(directory);
@@ -47,11 +47,15 @@ fn file_router(directory: &'static str) -> Router {
             path.push_str("index.html")
         }
 
-        let mut cache = cache.lock().unwrap();
+        if let Some(response) = cache.read().unwrap().get(&path) { // read lock gets dropped after if statement
+            return SendResponseArc(Arc::clone(response));
+        }
 
-        let response = cache.entry(path.clone()).or_insert_with(|| Arc::new(file_response(&path)));
+        let response = Arc::new(file_response(&path));
 
-        SendResponseArc(Arc::clone(&response))
+        cache.write().unwrap().insert(path, Arc::clone(&response));
+
+        SendResponseArc(response)
     });
 
     router
