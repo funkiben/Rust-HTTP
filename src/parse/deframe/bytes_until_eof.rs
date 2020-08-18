@@ -1,6 +1,6 @@
 use std::io::BufRead;
 
-use crate::parse2::deframe::deframe::{Deframe, DeframerResult};
+use crate::parse::deframe::deframe::{Deframe, DeframerResult};
 
 pub struct BytesUntilEofDeframer {
     data: Vec<u8>
@@ -21,7 +21,7 @@ impl Deframe<Vec<u8>> for BytesUntilEofDeframer {
         }
     }
 
-    fn data_so_far(&self) -> &Vec<u8> {
-        &self.data
+    fn data_so_far(&self) -> usize {
+        self.data.len()
     }
 }

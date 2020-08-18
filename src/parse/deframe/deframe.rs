@@ -7,5 +7,5 @@ pub trait Deframe<T>: Sized {
     /// If an IO error if encountered while reading, then the state of the deframer as well as the error are returned.
     fn read(self, reader: &mut impl BufRead) -> DeframerResult<T, Self>;
 
-    fn data_so_far(&self) -> &T;
+    fn data_so_far(&self) -> usize;
 }

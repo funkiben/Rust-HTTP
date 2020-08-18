@@ -2,11 +2,11 @@ use std::io::BufRead;
 
 use crate::common::header::{Header, HeaderMap, HeaderMapOps};
 use crate::header_map;
-use crate::parse2::crlf_line::CrlfLineParser;
-use crate::parse2::error::ParsingError;
-use crate::parse2::error_take::ReadExt;
-use crate::parse2::parse::{Parse, ParseResult};
-use crate::parse2::parse::ParseStatus::{Blocked, Done};
+use crate::parse::crlf_line::CrlfLineParser;
+use crate::parse::error::ParsingError;
+use crate::parse::error_take::ReadExt;
+use crate::parse::parse::{Parse, ParseResult};
+use crate::parse::parse::ParseStatus::{Blocked, Done};
 
 const MAX_HEADERS_SIZE: usize = 4096;
 
@@ -60,9 +60,9 @@ mod tests {
     use crate::common::header;
     use crate::common::header::HeaderMap;
     use crate::header_map;
-    use crate::parse2::error::ParsingError;
-    use crate::parse2::headers::HeadersParser;
-    use crate::parse2::test_util::test_blocking;
+    use crate::parse::error::ParsingError;
+    use crate::parse::headers::HeadersParser;
+    use crate::parse::test_util::test_blocking;
 
     fn test_read(tests: Vec<(Vec<&[u8]>, Result<Option<HeaderMap>, ParsingError>)>) {
         test_blocking(HeadersParser::new(), tests)

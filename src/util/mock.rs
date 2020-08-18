@@ -1,9 +1,9 @@
 use std::cmp::min;
-use std::io::{Read, Write, Error, ErrorKind};
+use std::io::{Error, ErrorKind, Read, Write};
 
 pub struct MockReader {
     pub return_would_block_when_empty: bool,
-    pub data: Vec<Vec<u8>>
+    pub data: Vec<Vec<u8>>,
 }
 
 impl MockReader {
@@ -23,7 +23,7 @@ impl Read for MockReader {
                 Ok(0)
             } else {
                 Err(Error::from(ErrorKind::WouldBlock))
-            }
+            };
         }
 
         let next = self.data.first_mut().unwrap();

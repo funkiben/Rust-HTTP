@@ -1,28 +1,48 @@
-use std::io::BufRead;
+use std::io::{BufRead, ErrorKind};
 
-use crate::parse2::deframe::deframe::Deframe;
-use crate::parse2::deframe::line::LineDeframer;
-use crate::parse2::error::ParsingError;
-use crate::parse2::error_take::ReadExt;
-use crate::parse2::parse::{Parse, ParseStatus};
-use crate::parse2::parse::ParseStatus::{Blocked, Done};
+use crate::parse::deframe::deframe::Deframe;
+use crate::parse::deframe::line::LineOrEofDeframer;
+use crate::parse::error::ParsingError;
+use crate::parse::error_take::ReadExt;
+use crate::parse::parse::{Parse, ParseResult, ParseStatus};
+use crate::parse::parse::ParseStatus::{Blocked, Done};
 
 const MAX_LINE_SIZE: usize = 512;
 
-pub struct CrlfLineParser(LineDeframer);
+/// Parses a CRLF terminated line.
+pub struct CrlfLineParser(CrlfLineOrEofParser);
 
 impl CrlfLineParser {
     pub fn new() -> CrlfLineParser {
-        CrlfLineParser(LineDeframer::new())
+        CrlfLineParser(CrlfLineOrEofParser::new())
     }
 }
 
 impl Parse<String> for CrlfLineParser {
     fn parse(self, reader: &mut impl BufRead) -> Result<ParseStatus<String, Self>, ParsingError> {
-        let mut reader = reader.error_take((MAX_LINE_SIZE - self.0.data_so_far().len()) as u64);
+        match self.0.parse(reader)? {
+            Done(None) => Err(ErrorKind::UnexpectedEof.into()),
+            Done(Some(line)) => Ok(Done(line)),
+            Blocked(parser) => Ok(Blocked(Self(parser)))
+        }
+    }
+}
+
+pub struct CrlfLineOrEofParser(LineOrEofDeframer);
+
+impl CrlfLineOrEofParser {
+    pub fn new() -> CrlfLineOrEofParser {
+        CrlfLineOrEofParser(LineOrEofDeframer::new())
+    }
+}
+
+impl Parse<Option<String>> for CrlfLineOrEofParser {
+    fn parse(self, reader: &mut impl BufRead) -> ParseResult<Option<String>, Self> {
+        let mut reader = reader.error_take((MAX_LINE_SIZE - self.0.data_so_far()) as u64);
 
         Ok(match self.0.parse(&mut reader)? {
-            Done(line) => Done(parse_crlf_line(line)?),
+            Done(Some(line)) => Done(Some(parse_crlf_line(line)?)),
+            Done(None) => Done(None),
             Blocked(inner) => Blocked(Self(inner))
         })
     }
@@ -40,10 +60,10 @@ fn parse_crlf_line(mut line: String) -> Result<String, ParsingError> {
 mod tests {
     use std::io::{Error, ErrorKind};
 
-    use crate::parse2::crlf_line::CrlfLineParser;
-    use crate::parse2::error::ParsingError;
-    use crate::parse2::error::ParsingError::BadSyntax;
-    use crate::parse2::test_util;
+    use crate::parse::crlf_line::CrlfLineParser;
+    use crate::parse::error::ParsingError;
+    use crate::parse::error::ParsingError::BadSyntax;
+    use crate::parse::test_util;
 
     fn test(tests: Vec<(Vec<&[u8]>, Result<Option<&str>, ParsingError>)>) {
         let tests = tests.into_iter()

@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 use std::io::{BufReader, Read};
 
-use crate::parse2::error::ParsingError;
-use crate::parse2::parse::{Parse, ParseResult};
-use crate::parse2::parse::ParseStatus::{Blocked, Done};
+use crate::parse::error::ParsingError;
+use crate::parse::parse::{Parse, ParseResult};
+use crate::parse::parse::ParseStatus::{Blocked, Done};
 use crate::util::mock::{EndlessMockReader, MockReader};
 
 pub fn test_blocking<T: Debug + Eq>(parser: impl Parse<T>, tests: Vec<(Vec<&[u8]>, Result<Option<T>, ParsingError>)>) {

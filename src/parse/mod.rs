@@ -1,14 +1,13 @@
-pub use request::*;
-pub use response::*;
-
-/// Parsing errors.
 pub mod error;
-/// Common components used for parsing both requests and responses.
-mod common;
-/// Request parsing.
-mod request;
-/// Response parsing.
-mod response;
-
-/// Utility for limiting the number of bytes that can be read from a reader.
+pub mod parse;
+mod crlf_line;
+mod headers;
+mod body;
+mod deframe;
 mod error_take;
+mod message;
+pub mod request;
+pub mod response;
+
+#[cfg(test)]
+mod test_util;

@@ -1,8 +1,8 @@
 use std::io::{BufRead, Error, ErrorKind};
 
-use crate::parse2::deframe::deframe::Deframe;
-use crate::parse2::error::ParsingError;
-use crate::parse2::parse::ParseStatus::{Blocked, Done};
+use crate::parse::deframe::deframe::Deframe;
+use crate::parse::error::ParsingError;
+use crate::parse::parse::ParseStatus::{Blocked, Done};
 
 pub type ParseResult<T, R> = Result<ParseStatus<T, R>, ParsingError>;
 

@@ -2,19 +2,17 @@ use std::io::BufRead;
 
 use crate::common::header::{HeaderMap, HeaderMapOps};
 use crate::common::header;
-use crate::parse2::body::BodyParser::{Chunked, Empty, UntilEof, WithSize};
-use crate::parse2::body::chunked::ChunkParser;
-use crate::parse2::deframe::bytes::BytesDeframer;
-use crate::parse2::deframe::bytes_until_eof::BytesUntilEofDeframer;
-use crate::parse2::deframe::deframe::Deframe;
-use crate::parse2::error::ParsingError;
-use crate::parse2::error_take::ReadExt;
-use crate::parse2::parse::{Parse, ParseResult};
-use crate::parse2::parse::ParseStatus::Done;
+use crate::parse::body::BodyParser::{Chunked, Empty, UntilEof, WithSize};
+use crate::parse::body::chunked::ChunkParser;
+use crate::parse::deframe::bytes::BytesDeframer;
+use crate::parse::deframe::bytes_until_eof::BytesUntilEofDeframer;
+use crate::parse::deframe::deframe::Deframe;
+use crate::parse::error::ParsingError;
+use crate::parse::error_take::ReadExt;
+use crate::parse::parse::{Parse, ParseResult};
+use crate::parse::parse::ParseStatus::Done;
 
 const MAX_BODY_SIZE: usize = 3 * 1024 * 1024; // 3 megabytes
-
-static EMPTY_VEC: Vec<u8> = vec![];
 
 pub enum BodyParser {
     WithSize(BytesDeframer),
@@ -40,12 +38,12 @@ impl BodyParser {
         }
     }
 
-    fn data_so_far(&self) -> &Vec<u8> {
+    fn data_so_far(&self) -> usize {
         match self {
             WithSize(parser) => parser.data_so_far(),
             UntilEof(parser) => parser.data_so_far(),
             Chunked(parser) => parser.data_so_far(),
-            Empty => &EMPTY_VEC
+            Empty => 0
         }
     }
 }
@@ -65,7 +63,7 @@ fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
 
 impl Parse<Vec<u8>> for BodyParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<Vec<u8>, Self> {
-        let mut reader = reader.error_take((MAX_BODY_SIZE - self.data_so_far().len()) as u64);
+        let mut reader = reader.error_take((MAX_BODY_SIZE - self.data_so_far()) as u64);
 
         Ok(match self {
             WithSize(parser) => parser.parse(&mut reader)?.map_blocked(|parser| WithSize(parser)),
@@ -79,13 +77,13 @@ impl Parse<Vec<u8>> for BodyParser {
 mod chunked {
     use std::io::BufRead;
 
-    use crate::parse2::body::chunked::State::{Data, Finished, Size, TailingCrlf};
-    use crate::parse2::body::MAX_BODY_SIZE;
-    use crate::parse2::crlf_line::CrlfLineParser;
-    use crate::parse2::deframe::bytes::BytesDeframer;
-    use crate::parse2::error::ParsingError;
-    use crate::parse2::parse::{Parse, ParseResult};
-    use crate::parse2::parse::ParseStatus::{Blocked, Done};
+    use crate::parse::body::chunked::State::{Data, Finished, Size, TailingCrlf};
+    use crate::parse::body::MAX_BODY_SIZE;
+    use crate::parse::crlf_line::CrlfLineParser;
+    use crate::parse::deframe::bytes::BytesDeframer;
+    use crate::parse::error::ParsingError;
+    use crate::parse::parse::{Parse, ParseResult};
+    use crate::parse::parse::ParseStatus::{Blocked, Done};
 
     pub struct ChunkParser {
         body: Vec<u8>,
@@ -104,8 +102,8 @@ mod chunked {
             ChunkParser { body: vec![], state: Size(CrlfLineParser::new()) }
         }
 
-        pub fn data_so_far(&self) -> &Vec<u8> {
-            &self.body
+        pub fn data_so_far(&self) -> usize {
+            self.body.len()
         }
     }
 
@@ -171,10 +169,10 @@ mod tests {
     use std::io::{Error, ErrorKind};
 
     use crate::header_map;
-    use crate::parse2::body::BodyParser;
-    use crate::parse2::error::ParsingError;
-    use crate::parse2::error::ParsingError::{BadSyntax, ContentLengthTooLarge, InvalidChunkSize};
-    use crate::parse2::test_util;
+    use crate::parse::body::BodyParser;
+    use crate::parse::error::ParsingError;
+    use crate::parse::error::ParsingError::{BadSyntax, ContentLengthTooLarge, InvalidChunkSize};
+    use crate::parse::test_util;
 
     fn test_sized(size: usize, tests: Vec<(Vec<&[u8]>, Result<Option<Vec<u8>>, ParsingError>)>) {
         let parser = BodyParser::new(&header_map![("content-length", size.to_string())], false).unwrap();

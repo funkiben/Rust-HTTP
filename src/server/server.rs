@@ -9,8 +9,8 @@ use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::parse::error::ParsingError;
-use crate::parse::error::RequestParsingError;
-use crate::parse::read_request;
+use crate::parse::parse::{Parse, ParseStatus};
+use crate::parse::request::RequestParser;
 use crate::server::config::Config;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
@@ -115,7 +115,7 @@ fn write_response_from_router(writer: &mut impl Write, router: &Router, request:
 }
 
 /// Writes a response to the given request parsing error.
-fn write_error_response(writer: &mut impl Write, error: RequestParsingError) -> std::io::Result<()> {
+fn write_error_response(writer: &mut impl Write, error: ParsingError) -> std::io::Result<()> {
     println!("Error: {:?}", error);
     writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
     writer.flush()
@@ -129,16 +129,19 @@ fn should_close_after_response(request: &Request) -> bool {
 /// Reads requests from the given reader until there is an invalid request or the connection is closed.
 /// Calls "on_request" for each request read.
 /// If "on_request" returns true, the function will return with Ok and stop reading future requests.
-fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
+fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), ParsingError> {
     let mut reader = BufReader::new(reader);
-    loop {
-        let request = read_request(&mut reader);
+    let mut request_parser = RequestParser::new();
 
-        match request {
-            Ok(request) => if on_request(request) { return Ok(()); },
-            Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
-            Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_io_error_ok(error) => return Ok(()),
-            err => return err.map(|_| {})
+    loop {
+        let result = request_parser.parse(&mut reader);
+
+        match result {
+            Ok(ParseStatus::Done(request)) => if on_request(request) { return Ok(()); } else { request_parser = RequestParser::new() },
+            Ok(ParseStatus::Blocked(parser)) => request_parser = parser,
+            Err(ParsingError::Eof) => return Ok(()),
+            Err(ParsingError::Reading(ref error)) if is_io_error_ok(error) => return Ok(()),
+            res => return res.map(|_| {})
         }
     }
 }
@@ -153,11 +156,7 @@ fn is_io_error_ok(error: &Error) -> bool {
 
 /// Writes the response as bytes to the given writer.
 pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
-    // TODO avoid calling write so many times
-    // use buf writer or no??
     // write! will call write multiple times and does not flush
-    // TODO avoid calling write so many times
-    // use buf writer or no??
     write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
         for value in values {

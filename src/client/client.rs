@@ -7,8 +7,10 @@ use crate::client::config::Config;
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::parse::error::ResponseParsingError;
-use crate::parse::read_response;
+use crate::parse::error::ParsingError;
+use crate::parse::parse::Parse;
+use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::response::ResponseParser;
 
 /// Client for making HTTP requests.
 pub struct Client {
@@ -22,13 +24,13 @@ pub struct Client {
 #[derive(Debug)]
 pub enum RequestError {
     /// Error with parsing the response received from the server.
-    ResponseParsing(ResponseParsingError),
+    ResponseParsing(ParsingError),
     /// Error sending the request to the server.
     Sending(Error),
 }
 
-impl From<ResponseParsingError> for RequestError {
-    fn from(err: ResponseParsingError) -> Self {
+impl From<ParsingError> for RequestError {
+    fn from(err: ParsingError) -> Self {
         RequestError::ResponseParsing(err)
     }
 }
@@ -88,7 +90,12 @@ impl Connection {
     /// If the request cannot be written, then a new connection is opened and the request is retried once more.
     fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
         self.try_write(request)?;
-        read_response(self.reader.as_mut().unwrap()).map_err(ResponseParsingError::into)
+
+        let response_parser = ResponseParser::new();
+        match response_parser.parse(self.reader.as_mut().unwrap())? {
+            Done(response) => Ok(response),
+            Blocked(_) => panic!("this will never be reached of the reader is blocking")
+        }
     }
 
     /// Tries to write the request to the server.

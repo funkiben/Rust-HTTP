@@ -1,4 +1,4 @@
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
@@ -9,46 +9,28 @@ pub enum ParsingError {
     WrongHttpVersion,
     /// Header has invalid value.
     InvalidHeaderValue,
-    /// EOF found before any request or response can be read.
-    EOF,
+    /// EOF found before any data is read.
+    Eof,
     /// Size of chunk in chunked transfer encoding can not be parsed as a number.
     InvalidChunkSize,
-    /// Error reading from the reader.
-    Reading(Error),
-}
-
-/// Possible errors that can be encountered when trying to parse a request.
-#[derive(Debug)]
-pub enum RequestParsingError {
+    /// Content length exceeds maximum size.
+    ContentLengthTooLarge,
     /// Method is unrecognized.
-    UnrecognizedMethod(String),
-    /// Base error.
-    Base(ParsingError),
-}
-
-/// Possible errors that can be encountered when trying to parse a response.
-#[derive(Debug)]
-pub enum ResponseParsingError {
-    /// Response had an unknown status code.
+    UnrecognizedMethod,
+    /// Invalid status code.
     InvalidStatusCode,
-    /// Base error.
-    Base(ParsingError),
+    /// IO error from reader.
+    Reading(std::io::Error),
 }
 
-impl From<ParsingError> for ResponseParsingError {
-    fn from(err: ParsingError) -> Self {
-        ResponseParsingError::Base(err)
-    }
-}
-
-impl From<ParsingError> for RequestParsingError {
-    fn from(err: ParsingError) -> Self {
-        RequestParsingError::Base(err)
-    }
-}
-
-impl From<Error> for ParsingError {
+impl From<std::io::Error> for ParsingError {
     fn from(err: Error) -> Self {
         ParsingError::Reading(err)
+    }
+}
+
+impl From<std::io::ErrorKind> for ParsingError {
+    fn from(kind: ErrorKind) -> Self {
+        ParsingError::Reading(Error::from(kind))
     }
 }
