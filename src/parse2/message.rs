@@ -1,73 +1,101 @@
-use std::io::{BufRead, ErrorKind};
+use std::io::BufRead;
 
 use crate::common::header::HeaderMap;
-use crate::deframe::deframe::Deframe;
-use crate::deframe::error::DeframingError;
-use crate::deframe::headers_and_body_deframer::HeadersAndBodyDeframer;
-use crate::deframe::message_deframer::MessageDeframer::{FirstLine, HeadersAndBody};
+use crate::parse2::body::BodyParser;
+use crate::parse2::headers::HeadersParser;
+use crate::parse2::message::State::{Body, Finished, FirstLine, Headers};
+use crate::parse2::parse::{Parse, ParseResult};
+use crate::parse2::parse::ParseStatus::{Blocked, Done};
 
-pub enum MessageDeframer<D, F> {
-    FirstLine(D, bool),
-    HeadersAndBody(F, HeadersAndBodyDeframer),
+pub struct MessageParser<R, T> {
+    read_body_if_no_content_length: bool,
+    state: State<R, T>,
 }
 
-impl<D, F> MessageDeframer<D, F> {
-    pub fn new(first_line_deframer: D, read_body_if_no_content_length: bool) -> MessageDeframer<D, F> {
-        FirstLine(first_line_deframer, read_body_if_no_content_length)
+impl<R, T> MessageParser<R, T> {
+    pub fn new(first_line_parser: R, read_body_if_no_content_length: bool) -> MessageParser<R, T> {
+        MessageParser {
+            state: FirstLine(first_line_parser),
+            read_body_if_no_content_length,
+        }
     }
 }
 
-impl<F, D: Deframe<F>> Deframe<(F, HeaderMap, Vec<u8>)> for MessageDeframer<D, F> {
-    fn read(self, reader: &mut impl BufRead) -> Result<(F, HeaderMap, Vec<u8>), (Self, DeframingError)> {
-        match self {
-            FirstLine(deframer, read_body_if_no_content_length) => {
-                match map_unexpected_eof(deframer.read(reader)) {
-                    Ok(first_line) => HeadersAndBody(first_line, HeadersAndBodyDeframer::new(read_body_if_no_content_length)).read(reader),
-                    Err((deframer, err)) => Err((FirstLine(deframer, read_body_if_no_content_length), err))
-                }
-            }
-            HeadersAndBody(first_line, deframer) => {
-                match deframer.read(reader) {
-                    Ok((headers, body)) => Ok((first_line, headers, body)),
-                    Err((deframer, err)) => Err((HeadersAndBody(first_line, deframer), err))
-                }
+enum State<R, T> {
+    FirstLine(R),
+    Headers(T, HeadersParser),
+    Body(T, HeaderMap, BodyParser),
+    Finished(T, HeaderMap, Vec<u8>),
+}
+
+impl<T, R: Parse<T>> Parse<(T, HeaderMap, Vec<u8>)> for MessageParser<R, T> {
+    fn parse(self, reader: &mut impl BufRead) -> ParseResult<(T, HeaderMap, Vec<u8>), Self> {
+        let Self { mut state, read_body_if_no_content_length } = self;
+
+        loop {
+            let result = match state {
+                FirstLine(parser) => first_line_state(reader, parser)?,
+                Headers(first_line, parser) => headers_state(reader, first_line, parser, read_body_if_no_content_length)?,
+                Body(first_line, headers, parser) => body_state(reader, first_line, headers, parser)?,
+                Finished(first_line, headers, body) => return Ok(Done((first_line, headers, body)))
+            };
+
+            state = match result {
+                Done(state) => state,
+                Blocked(state) => return Ok(Blocked(Self { state, read_body_if_no_content_length }))
             }
         }
     }
 }
 
-fn map_unexpected_eof<T, E>(res: Result<T, (E, DeframingError)>) -> Result<T, (E, DeframingError)> {
-    res.map_err(|err|
-        match err {
-            (x, DeframingError::Reading(err)) if err.kind() == ErrorKind::UnexpectedEof => (x, DeframingError::EOF),
-            x => x
-        }
-    )
+fn first_line_state<T, R: Parse<T>>(reader: &mut impl BufRead, parser: R) -> ParseResult<State<R, T>, State<R, T>> {
+    Ok(match parser.parse(reader)? {
+        Done(first_line) => Done(Headers(first_line, HeadersParser::new())),
+        Blocked(parser) => Blocked(FirstLine(parser))
+    })
 }
+
+fn headers_state<T, R>(reader: &mut impl BufRead, first_line: T, parser: HeadersParser, read_body_if_no_content_length: bool) -> ParseResult<State<R, T>, State<R, T>> {
+    Ok(match parser.parse(reader)? {
+        Done(headers) => {
+            let body_parser = BodyParser::new(&headers, read_body_if_no_content_length)?;
+            Done(Body(first_line, headers, body_parser))
+        }
+        Blocked(parser) => Blocked(Headers(first_line, parser))
+    })
+}
+
+fn body_state<T, R>(reader: &mut impl BufRead, first_line: T, headers: HeaderMap, parser: BodyParser) -> ParseResult<State<R, T>, State<R, T>> {
+    Ok(match parser.parse(reader)? {
+        Done(body) => Done(Finished(first_line, headers, body)),
+        Blocked(parser) => Blocked(Body(first_line, headers, parser))
+    })
+}
+
 
 #[cfg(test)]
 mod tests {
     use std::io::{Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
-    use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
-    use crate::deframe::error::DeframingError;
-    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidChunkSize, InvalidHeaderValue, Reading};
-    use crate::deframe::message_deframer::MessageDeframer;
-    use crate::deframe::test_util;
+    use crate::parse2::crlf_line::CrlfLineParser;
+    use crate::parse2::error::ParsingError;
+    use crate::parse2::error::ParsingError::{BadSyntax, InvalidChunkSize, InvalidHeaderValue, Reading};
+    use crate::parse2::message::MessageParser;
+    use crate::parse2::test_util;
 
     type Message = (String, HeaderMap, Vec<u8>);
-    type Deframer = MessageDeframer<CrlfLineDeframer, String>;
+    type Parser = MessageParser<CrlfLineParser, String>;
 
-    fn get_message_deframer(read_if_no_content_length: bool) -> Deframer {
-        MessageDeframer::new(CrlfLineDeframer::new(), read_if_no_content_length)
+    fn get_message_deframer(read_if_no_content_length: bool) -> Parser {
+        MessageParser::new(CrlfLineParser::new(), read_if_no_content_length)
     }
 
-    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<Message, DeframingError>) {
+    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<Message, ParsingError>) {
         test_util::test_with_eof(get_message_deframer(read_if_no_content_length), input, expected);
     }
 
-    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<Message, DeframingError>) {
+    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<Message, ParsingError>) {
         test_util::test_endless_strs(get_message_deframer(read_if_no_content_length), data, endless_data, expected);
     }
 
@@ -176,7 +204,7 @@ mod tests {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
-            Err(BadSyntax),
+            Err(ErrorKind::UnexpectedEof.into()),
         );
     }
 
@@ -234,7 +262,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK"],
             false,
-            Err(BadSyntax),
+            Err(ErrorKind::UnexpectedEof.into()),
         );
     }
 
@@ -270,7 +298,7 @@ mod tests {
         test_with_eof(
             vec![],
             false,
-            Err(EOF),
+            Err(ErrorKind::UnexpectedEof.into()),
         );
     }
 
@@ -279,7 +307,7 @@ mod tests {
         test_with_eof(
             vec!["a"],
             false,
-            Err(BadSyntax),
+            Err(ErrorKind::UnexpectedEof.into()),
         );
     }
 
@@ -450,7 +478,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "zhelloiouf jwiufji ejif jef"],
             false,
-            Err(BadSyntax),
+            Err(Error::from(ErrorKind::UnexpectedEof).into()),
         );
     }
 

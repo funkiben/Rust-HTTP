@@ -10,5 +10,4 @@ pub(crate) mod parse;
 /// Utility components.
 pub(crate) mod util;
 
-/// Deframers for HTTP requests and responses.
-pub(crate) mod deframe;
+pub(crate) mod parse2;

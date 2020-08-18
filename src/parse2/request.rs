@@ -1,73 +1,67 @@
-use std::io::BufRead;
+use std::io::{BufRead, ErrorKind};
 
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
-use crate::deframe::crlf_line_deframer::CrlfLineDeframer;
-use crate::deframe::deframe::Deframe;
-use crate::deframe::error::DeframingError;
-use crate::deframe::message_deframer::MessageDeframer;
+use crate::parse2::crlf_line::CrlfLineParser;
+use crate::parse2::error::ParsingError;
+use crate::parse2::message::MessageParser;
+use crate::parse2::parse::{Parse, ParseResult};
+use crate::parse2::parse::ParseStatus::{Blocked, Done};
 
-pub struct RequestDeframer {
-    inner: MessageDeframer<FirstLineDeframer, (Method, String)>
+pub struct RequestParser(MessageParser<FirstLineParser, (Method, String)>);
+
+impl RequestParser {
+    pub fn new() -> RequestParser {
+        RequestParser(MessageParser::new(FirstLineParser::new(), false))
+    }
 }
 
-impl RequestDeframer {
-    pub fn new() -> RequestDeframer {
-        RequestDeframer {
-            inner: MessageDeframer::new(FirstLineDeframer::new(), false)
+impl Parse<Request> for RequestParser {
+    fn parse(self, reader: &mut impl BufRead) -> ParseResult<Request, Self> {
+        Ok(match self.0.parse(reader)? {
+            Done(((method, uri), headers, body)) => Done(Request { method, uri, headers, body }),
+            Blocked(parser) => Blocked(Self(parser))
+        })
+    }
+}
+
+struct FirstLineParser(CrlfLineParser);
+
+impl FirstLineParser {
+    fn new() -> FirstLineParser {
+        FirstLineParser(CrlfLineParser::new())
+    }
+}
+
+impl Parse<(Method, String)> for FirstLineParser {
+    fn parse(self, reader: &mut impl BufRead) -> ParseResult<(Method, String), Self> {
+        match self.0.parse(reader) {
+            Err(ParsingError::Reading(err)) if err.kind() == ErrorKind::UnexpectedEof => Err(ParsingError::EOF),
+            Err(e) => Err(e),
+            Ok(Done(line)) => Ok(Done(parse_first_line(line)?)),
+            Ok(Blocked(parser)) => Ok(Blocked(Self(parser)))
         }
     }
 }
 
-impl Deframe<Request> for RequestDeframer {
-    fn read(self, reader: &mut impl BufRead) -> Result<Request, (Self, DeframingError)> {
-        match self.inner.read(reader) {
-            Ok(((method, uri), headers, body)) => Ok(Request { method, uri, headers, body }),
-            Err((inner, err)) => Err((Self { inner }, err))
-        }
-    }
-}
-
-struct FirstLineDeframer {
-    line_deframer: CrlfLineDeframer
-}
-
-impl FirstLineDeframer {
-    fn new() -> FirstLineDeframer {
-        FirstLineDeframer { line_deframer: CrlfLineDeframer::new() }
-    }
-}
-
-impl Deframe<(Method, String)> for FirstLineDeframer {
-    fn read(self, reader: &mut impl BufRead) -> Result<(Method, String), (Self, DeframingError)> {
-        match self.line_deframer.read(reader) {
-            Ok(line) => {
-                let (method, uri) = parse_first_line(line).map_err(|err| (Self::new(), err))?;
-                Ok((method, uri))
-            }
-            Err((line_deframer, err)) => Err((Self { line_deframer, ..self }, err))
-        }
-    }
-}
-
-fn parse_first_line(line: String) -> Result<(Method, String), DeframingError> {
+fn parse_first_line(line: String) -> Result<(Method, String), ParsingError> {
     let mut split = line.split(" ");
 
-    let method_raw = split.next().ok_or(DeframingError::BadSyntax)?;
-    let uri = split.next().ok_or(DeframingError::BadSyntax)?;
-    let http_version = split.next().ok_or(DeframingError::BadSyntax)?;
+    let method_raw = split.next().ok_or(ParsingError::BadSyntax)?;
+    let uri = split.next().ok_or(ParsingError::BadSyntax)?;
+    let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
 
     if !http_version.eq(HTTP_VERSION) {
-        return Err(DeframingError::WrongHttpVersion.into());
+        return Err(ParsingError::WrongHttpVersion.into());
     }
 
     Ok((parse_method(method_raw)?, uri.to_string()))
 }
 
 /// Parses the given string into a method. If the method is not recognized, will return an error.
-fn parse_method(raw: &str) -> Result<Method, DeframingError> {
-    Method::try_from_str(raw).ok_or_else(|| DeframingError::UnrecognizedMethod)
+fn parse_method(raw: &str) -> Result<Method, ParsingError> {
+    Method::try_from_str(raw).ok_or_else(|| ParsingError::UnrecognizedMethod)
 }
 
 #[cfg(test)]
@@ -77,14 +71,14 @@ mod tests {
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
     use crate::common::request::Request;
-    use crate::deframe::error::DeframingError::{BadSyntax, EOF, InvalidHeaderValue, Reading, UnrecognizedMethod, WrongHttpVersion};
-    use crate::deframe::error::DeframingError;
-    use crate::deframe::request_deframer::RequestDeframer;
-    use crate::deframe::test_util;
     use crate::header_map;
+    use crate::parse2::error::ParsingError;
+    use crate::parse2::error::ParsingError::{BadSyntax, EOF, InvalidHeaderValue, UnrecognizedMethod, WrongHttpVersion};
+    use crate::parse2::request::RequestParser;
+    use crate::parse2::test_util;
 
-    fn test_with_eof(data: Vec<&str>, expected: Result<Request, DeframingError>) {
-        test_util::test_with_eof(RequestDeframer::new(), data, expected);
+    fn test_with_eof(data: Vec<&str>, expected: Result<Request, ParsingError>) {
+        test_util::test_with_eof(RequestParser::new(), data, expected);
     }
 
     #[test]
@@ -341,7 +335,7 @@ mod tests {
     fn no_newlines() {
         test_with_eof(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
-            Err(BadSyntax.into()))
+            Err(EOF))
     }
 
     #[test]
@@ -397,14 +391,14 @@ mod tests {
     fn missing_crlf_after_last_header() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
+            Err(ErrorKind::UnexpectedEof.into()))
     }
 
     #[test]
     fn missing_crlfs() {
         test_with_eof(
             vec!["GET / HTTP/1.1"],
-            Err(BadSyntax.into()))
+            Err(EOF))
     }
 
     #[test]
@@ -435,7 +429,7 @@ mod tests {
     fn body_content_length_too_long() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof)).into()))
+            Err(ErrorKind::UnexpectedEof.into()))
     }
 
     #[test]
@@ -455,7 +449,7 @@ mod tests {
     fn negative_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
-            Err(InvalidHeaderValue.into()));
+            Err(InvalidHeaderValue));
     }
 
     #[test]

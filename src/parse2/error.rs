@@ -1,6 +1,8 @@
+use std::io::{Error, ErrorKind};
+
 /// Error for when an HTTP message can't be parsed.
 #[derive(Debug)]
-pub enum DeframingError {
+pub enum ParsingError {
     /// Invalid syntax in the message.
     BadSyntax,
     /// Message has wrong HTTP version.
@@ -13,16 +15,22 @@ pub enum DeframingError {
     InvalidChunkSize,
     /// Content length exceeds maximum size.
     ContentLengthTooLarge,
-    /// Error reading from the reader.
-    Reading(std::io::Error),
     /// Method is unrecognized.
     UnrecognizedMethod,
     /// Invalid status code.
     InvalidStatusCode,
+    /// IO error from reader.
+    Reading(std::io::Error),
 }
 
-impl From<std::io::Error> for DeframingError {
-    fn from(err: std::io::Error) -> Self {
-        DeframingError::Reading(err)
+impl From<std::io::Error> for ParsingError {
+    fn from(err: Error) -> Self {
+        ParsingError::Reading(err)
+    }
+}
+
+impl From<std::io::ErrorKind> for ParsingError {
+    fn from(kind: ErrorKind) -> Self {
+        ParsingError::Reading(Error::from(kind))
     }
 }
