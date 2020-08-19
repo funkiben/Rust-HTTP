@@ -21,7 +21,7 @@ impl Deframe<Vec<u8>> for BytesUntilEofDeframer {
         }
     }
 
-    fn data_so_far(&self) -> usize {
+    fn read_so_far(&self) -> usize {
         self.data.len()
     }
 }

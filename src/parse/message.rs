@@ -7,12 +7,16 @@ use crate::parse::message::State::{Body, Finished, FirstLine, Headers};
 use crate::parse::parse::{Parse, ParseResult};
 use crate::parse::parse::ParseStatus::{Blocked, Done};
 
+/// Generic HTTP message parser, used by both response and request parsing.
 pub struct MessageParser<R, T> {
     read_body_if_no_content_length: bool,
     state: State<R, T>,
 }
 
 impl<R, T> MessageParser<R, T> {
+    /// Creates a new message parser with the given parser to parse the first line.
+    /// If read_body_if_no_content_length is true and no content length is provided, then the message
+    /// body will consist of all data up to EOF. Otherwise the body will be empty.
     pub fn new(first_line_parser: R, read_body_if_no_content_length: bool) -> MessageParser<R, T> {
         MessageParser {
             state: FirstLine(first_line_parser),

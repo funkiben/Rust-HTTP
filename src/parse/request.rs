@@ -9,6 +9,8 @@ use crate::parse::message::MessageParser;
 use crate::parse::parse::{Parse, ParseResult};
 use crate::parse::parse::ParseStatus::{Blocked, Done};
 
+/// Parser for requests.
+/// NOTE: Returns an Eof error instead of UnexpectedEof error if EOF is found before any data can be read.
 pub struct RequestParser(MessageParser<FirstLineParser, (Method, String)>);
 
 impl RequestParser {

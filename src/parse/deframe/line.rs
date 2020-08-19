@@ -2,6 +2,9 @@ use std::io::{BufRead, Error, ErrorKind};
 
 use crate::parse::deframe::deframe::{Deframe, DeframerResult};
 
+/// A parser for a '\n' terminated line.
+/// If no data is read and EOF is reached then None is returned.
+/// If EOF is returned before '\n' then an UnexpectedEof error is returned.
 pub struct LineOrEofDeframer {
     line: String
 }
@@ -27,7 +30,7 @@ impl Deframe<Option<String>> for LineOrEofDeframer {
     }
 
 
-    fn data_so_far(&self) -> usize {
+    fn read_so_far(&self) -> usize {
         self.line.len()
     }
 }

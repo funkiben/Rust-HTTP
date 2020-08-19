@@ -9,6 +9,7 @@ use crate::parse::message::MessageParser;
 use crate::parse::parse::{Parse, ParseResult};
 use crate::parse::parse::ParseStatus::{Blocked, Done};
 
+/// Parser for responses.
 pub struct ResponseParser(MessageParser<FirstLineParser, Status>);
 
 impl ResponseParser {

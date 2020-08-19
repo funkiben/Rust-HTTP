@@ -10,6 +10,7 @@ use crate::parse::parse::ParseStatus::{Blocked, Done};
 
 const MAX_HEADERS_SIZE: usize = 4096;
 
+/// Parser for headers.
 pub struct HeadersParser {
     inner: CrlfLineParser,
     headers: HeaderMap,

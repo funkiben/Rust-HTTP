@@ -12,8 +12,10 @@ use crate::parse::error_take::ReadExt;
 use crate::parse::parse::{Parse, ParseResult};
 use crate::parse::parse::ParseStatus::Done;
 
+/// The maximum size of a body.
 const MAX_BODY_SIZE: usize = 3 * 1024 * 1024; // 3 megabytes
 
+/// Parser for a message body.
 pub enum BodyParser {
     WithSize(BytesDeframer),
     UntilEof(BytesUntilEofDeframer),
@@ -40,8 +42,8 @@ impl BodyParser {
 
     fn data_so_far(&self) -> usize {
         match self {
-            WithSize(parser) => parser.data_so_far(),
-            UntilEof(parser) => parser.data_so_far(),
+            WithSize(parser) => parser.read_so_far(),
+            UntilEof(parser) => parser.read_so_far(),
             Chunked(parser) => parser.data_so_far(),
             Empty => 0
         }

@@ -138,7 +138,7 @@ fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool
 
         match result {
             Ok(ParseStatus::Done(request)) => if on_request(request) { return Ok(()); } else { request_parser = RequestParser::new() },
-            Ok(ParseStatus::Blocked(parser)) => request_parser = parser,
+            Ok(ParseStatus::Blocked(_)) => return Ok(()),
             Err(ParsingError::Eof) => return Ok(()),
             Err(ParsingError::Reading(ref error)) if is_io_error_ok(error) => return Ok(()),
             res => return res.map(|_| {})

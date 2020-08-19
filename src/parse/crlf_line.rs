@@ -28,6 +28,8 @@ impl Parse<String> for CrlfLineParser {
     }
 }
 
+/// Parses either a CRLF terminated line or an EOF with no prior data.
+/// If an EOF is found before any data is read, then None is returned.
 pub struct CrlfLineOrEofParser(LineOrEofDeframer);
 
 impl CrlfLineOrEofParser {
@@ -38,7 +40,7 @@ impl CrlfLineOrEofParser {
 
 impl Parse<Option<String>> for CrlfLineOrEofParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<Option<String>, Self> {
-        let mut reader = reader.error_take((MAX_LINE_SIZE - self.0.data_so_far()) as u64);
+        let mut reader = reader.error_take((MAX_LINE_SIZE - self.0.read_so_far()) as u64);
 
         Ok(match self.0.parse(&mut reader)? {
             Done(Some(line)) => Done(Some(parse_crlf_line(line)?)),
