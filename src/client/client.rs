@@ -94,7 +94,7 @@ impl Connection {
         let response_parser = ResponseParser::new();
         match response_parser.parse(self.reader.as_mut().unwrap())? {
             Done(response) => Ok(response),
-            Blocked(_) => panic!("this will never be reached of the reader is blocking")
+            Blocked(_) => panic!("this will never be reached because the reader is blocking")
         }
     }
 
