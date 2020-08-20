@@ -18,7 +18,7 @@ pub enum ReadRequestResult {
 }
 
 pub struct Connection<S: Read + Write> {
-    addr: SocketAddr,
+    pub addr: SocketAddr,
     stream: BufStream<S>,
     parser: Option<RequestParser>,
 }

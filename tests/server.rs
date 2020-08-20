@@ -473,7 +473,7 @@ fn infinite_chunked_body() {
 
 #[test]
 fn insanely_huge_body() {
-    let mut server = Server::new(Config {
+    let server = Server::new(Config {
         addr: "0.0.0.0:7009",
         connection_handler_threads: 5,
         tls_config: None,

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr};
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use mio::{Events, Interest, Poll, Token};
@@ -65,37 +64,28 @@ impl Server {
 
             for event in &events {
                 match event.token() {
-                    SERVER_TOKEN => {
-                        loop {
-                            match listener.accept() {
-                                Ok((mut stream, addr)) => {
-                                    let token = Token(next_token);
-                                    next_token += 1;
-                                    poll.registry().register(&mut stream, token, Interest::READABLE)?;
+                    SERVER_TOKEN => listen_until_blocked(&listener, |(mut stream, addr)| {
+                        let token = Token(next_token);
+                        next_token += 1;
 
-                                    let connection = if let Some(ref cfg) = tls_config {
-                                        ClientConnection::new_tls(addr, stream, cfg)
-                                    } else {
-                                        ClientConnection::new_plaintext(addr, stream)
-                                    };
+                        poll.registry().register(&mut stream, token, Interest::READABLE)?;
 
-                                    connections.insert(token, Arc::new(Mutex::new(connection)));
-                                }
-                                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                                Err(err) => println!("Error unwrapping connection {:?}", err)
-                            }
-                        }
-                    }
-                    token if event.is_read_closed() => {
-                        connections.remove(&token);
-                    }
-                    token => {
-                        let connection = connections.get(&token).cloned();
-                        if let Some(connection) = connection {
+                        let connection = if let Some(ref cfg) = tls_config {
+                            ClientConnection::new_tls(addr, stream, cfg)
+                        } else {
+                            ClientConnection::new_plaintext(addr, stream)
+                        };
+
+                        connections.insert(token, Arc::new(Mutex::new(connection)));
+
+                        Ok(())
+                    }),
+                    token if event.is_read_closed() => { connections.remove(&token); }
+                    token =>
+                        if let Some(connection) = connections.get(&token).cloned() {
                             let server = Arc::clone(&server);
                             thread_pool.execute(move || server.handle_connection(connection));
                         }
-                    }
                 }
             }
         }
@@ -105,13 +95,68 @@ impl Server {
         let mut connection = connection.lock().unwrap();
 
         if !connection.is_shutdown() {
-            let close = match connection.deref_mut() {
-                ClientConnection::PlainText(_, conn) => respond_to_requests(conn, &self.router),
-                ClientConnection::Tls(_, conn) => respond_to_requests(conn, &self.router),
-            };
-            if close {
+            let should_close = connection.respond_to_requests(&self.router);
+            if should_close {
                 connection.shutdown().unwrap_or_default();
             }
+        }
+    }
+}
+
+enum ClientConnection {
+    PlainText(bool, Connection<TcpStream>),
+    Tls(bool, Connection<rustls::StreamOwned<ServerSession, TcpStream>>),
+}
+
+impl ClientConnection {
+    fn new_plaintext(addr: SocketAddr, stream: TcpStream) -> ClientConnection {
+        ClientConnection::PlainText(false, Connection::new(addr, stream))
+    }
+
+    fn new_tls(addr: SocketAddr, stream: TcpStream, config: &Arc<ServerConfig>) -> ClientConnection {
+        ClientConnection::Tls(false, Connection::new(addr, rustls::StreamOwned::new(ServerSession::new(config), stream)))
+    }
+
+    fn respond_to_requests(&mut self, router: &Router) -> bool {
+        match self {
+            ClientConnection::PlainText(_, conn) => respond_to_requests(conn, router),
+            ClientConnection::Tls(_, conn) => respond_to_requests(conn, router),
+        }
+    }
+
+    fn is_shutdown(&self) -> bool {
+        match self {
+            ClientConnection::PlainText(shutdown, _) => *shutdown,
+            ClientConnection::Tls(shutdown, _) => *shutdown
+        }
+    }
+
+    fn shutdown(&mut self) -> std::io::Result<()> {
+        match self {
+            ClientConnection::PlainText(shutdown, conn) => {
+                *shutdown = true;
+                conn.stream_ref().shutdown(Shutdown::Both)
+            }
+            ClientConnection::Tls(shutdown, conn) => {
+                *shutdown = true;
+                conn.stream_mut().sess.send_close_notify();
+                conn.stream_mut().flush().unwrap_or_default();
+                conn.stream_ref().sock.shutdown(Shutdown::Both)
+            }
+        }
+    }
+}
+
+fn listen_until_blocked(listener: &TcpListener, mut on_connection: impl FnMut((TcpStream, SocketAddr)) -> std::io::Result<()>) {
+    loop {
+        match listener.accept() {
+            Ok(conn) => {
+                if let Some(err) = on_connection(conn).err() {
+                    println!("Error initializing connection: {:?}", err)
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+            Err(err) => println!("Error unwrapping connection: {:?}", err)
         }
     }
 }
@@ -171,44 +216,6 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     writer.flush()?;
     Ok(())
 }
-
-enum ClientConnection {
-    PlainText(bool, Connection<TcpStream>),
-    Tls(bool, Connection<rustls::StreamOwned<ServerSession, TcpStream>>),
-}
-
-impl ClientConnection {
-    fn new_plaintext(addr: SocketAddr, stream: TcpStream) -> ClientConnection {
-        ClientConnection::PlainText(false, Connection::new(addr, stream))
-    }
-
-    fn new_tls(addr: SocketAddr, stream: TcpStream, config: &Arc<ServerConfig>) -> ClientConnection {
-        ClientConnection::Tls(false, Connection::new(addr, rustls::StreamOwned::new(ServerSession::new(config), stream)))
-    }
-
-    fn is_shutdown(&self) -> bool {
-        match self {
-            ClientConnection::PlainText(shutdown, _) => *shutdown,
-            ClientConnection::Tls(shutdown, _) => *shutdown
-        }
-    }
-
-    fn shutdown(&mut self) -> std::io::Result<()> {
-        match self {
-            ClientConnection::PlainText(shutdown, conn) => {
-                *shutdown = true;
-                conn.stream_ref().shutdown(Shutdown::Both)
-            }
-            ClientConnection::Tls(shutdown, conn) => {
-                *shutdown = true;
-                conn.stream_mut().sess.send_close_notify();
-                conn.stream_mut().flush().unwrap_or_default();
-                conn.stream_ref().sock.shutdown(Shutdown::Both)
-            }
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
