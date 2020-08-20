@@ -11,8 +11,8 @@ use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status;
-use my_http::header_map;
-use my_http::server::{Config, Server};
+use my_http::{header_map, server};
+use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::SendResponse;
 use util::curl;
 use util::test_server;
@@ -21,13 +21,9 @@ mod util;
 
 #[test]
 fn curl_request() {
-    let mut server = Server::new(Config {
-        addr: "0.0.0.0:8000",
-        connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
-    });
+    let mut router = Router::new();
 
-    server.router.on_prefix("/", |_, _| {
+    router.on_prefix("/", |_, _| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],
@@ -35,7 +31,12 @@ fn curl_request() {
         })
     });
 
-    spawn(|| server.start().unwrap());
+    spawn(|| server::start(Config {
+        addr: "0.0.0.0:8000",
+        connection_handler_threads: 5,
+        tls_config: Some(get_tsl_config()),
+        router
+    }));
 
     sleep(Duration::from_millis(1000));
 
@@ -51,13 +52,9 @@ fn curl_request() {
 
 #[test]
 fn curl_multiple_requests_same_connection() {
-    let mut server = Server::new(Config {
-        addr: "0.0.0.0:8001",
-        connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
-    });
+    let mut router = Router::new();
 
-    server.router.on_prefix("/", |_, _| {
+    router.on_prefix("/", |_, _| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],
@@ -65,7 +62,12 @@ fn curl_multiple_requests_same_connection() {
         })
     });
 
-    spawn(|| server.start());
+    spawn(|| server::start(Config {
+        addr: "0.0.0.0:8001",
+        connection_handler_threads: 5,
+        tls_config: Some(get_tsl_config()),
+        router
+    }));
 
     sleep(Duration::from_millis(1000));
 
@@ -89,6 +91,7 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
             addr: "0.0.0.0:8002",
             connection_handler_threads: 5,
             tls_config: Some(get_tsl_config()),
+            router: Router::new()
         },
         50,
         vec![(
@@ -117,6 +120,7 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
             addr: "0.0.0.0:8005",
             connection_handler_threads: 5,
             tls_config: Some(get_tsl_config()),
+            router: Router::new()
         },
         200,
         vec![(
@@ -136,13 +140,12 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
 
 #[test]
 fn infinite_connection() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:8003",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-    });
-
-    spawn(|| server.start());
+        router: Router::new()
+    }).unwrap());
 
     sleep(Duration::from_millis(1000));
 
@@ -157,13 +160,12 @@ fn infinite_connection() {
 
 #[test]
 fn normal_http_message() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:8004",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-    });
-
-    spawn(|| server.start());
+        router: Router::new()
+    }));
 
     sleep(Duration::from_millis(1000));
 

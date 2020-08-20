@@ -5,16 +5,15 @@ use std::net::TcpStream;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
+use my_http::{header_map, server};
 use my_http::common::header::{ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::common::status::Status;
-use my_http::header_map;
-use my_http::server::Config;
+use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::SendResponse;
-use my_http::server::Server;
 
 use crate::util::curl;
 use crate::util::test_server::{test_server, test_server_with_curl};
@@ -28,6 +27,7 @@ fn many_requests_with_short_headers_and_short_bodies() {
             addr: "0.0.0.0:7000",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new()
         },
         13, 11, true,
         vec![
@@ -77,6 +77,7 @@ fn many_connections_and_many_large_messages() {
             addr: "0.0.0.0:7001",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new()
         },
         15, 15, true,
         vec![
@@ -143,13 +144,9 @@ fn many_connections_and_many_large_messages() {
 
 #[test]
 fn curl_request() {
-    let mut server = Server::new(Config {
-        addr: "0.0.0.0:7011",
-        connection_handler_threads: 5,
-        tls_config: None,
-    });
+    let mut router = Router::new();
 
-    server.router.on_prefix("/", |_, _| {
+    router.on_prefix("/", |_, _| {
         SendResponse(Response {
             status: status::OK,
             headers: header_map![(CONTENT_LENGTH, "6")],
@@ -157,7 +154,12 @@ fn curl_request() {
         })
     });
 
-    spawn(|| server.start().unwrap());
+    spawn(|| server::start(Config {
+        addr: "0.0.0.0:7011",
+        connection_handler_threads: 5,
+        tls_config: None,
+        router,
+    }).unwrap());
 
     sleep(Duration::from_millis(1000));
 
@@ -179,6 +181,7 @@ fn curl_many_connections_and_many_large_messages() {
             addr: "0.0.0.0:7010",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new(),
         },
         20,
         vec![
@@ -248,6 +251,7 @@ fn many_connections_with_one_simple_request() {
             addr: "0.0.0.0:7002",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new(),
         },
         200, 1, false,
         vec![
@@ -274,6 +278,7 @@ fn many_connections_with_many_simple_requests() {
             addr: "0.0.0.0:7003",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new(),
         },
         10, 10, true,
         vec![
@@ -300,6 +305,7 @@ fn many_concurrent_connections_with_many_simple_requests_no_delay() {
             addr: "0.0.0.0:7004",
             connection_handler_threads: 5,
             tls_config: None,
+            router: Router::new(),
         },
         10, 10, false,
         vec![
@@ -321,15 +327,12 @@ fn many_concurrent_connections_with_many_simple_requests_no_delay() {
 
 #[test]
 fn infinite_connection() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7005",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 
@@ -350,15 +353,12 @@ fn infinite_connection() {
 
 #[test]
 fn infinite_connection_with_sleeps() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7012",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 
@@ -380,15 +380,12 @@ fn infinite_connection_with_sleeps() {
 
 #[test]
 fn infinite_headers() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7006",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 
@@ -411,15 +408,12 @@ fn infinite_headers() {
 
 #[test]
 fn infinite_header_value() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7007",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 
@@ -442,15 +436,12 @@ fn infinite_header_value() {
 
 #[test]
 fn infinite_chunked_body() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7008",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 
@@ -473,15 +464,12 @@ fn infinite_chunked_body() {
 
 #[test]
 fn insanely_huge_body() {
-    let server = Server::new(Config {
+    spawn(|| server::start(Config {
         addr: "0.0.0.0:7009",
         connection_handler_threads: 5,
         tls_config: None,
-    });
-
-    spawn(|| {
-        server.start().unwrap();
-    });
+        router: Router::new(),
+    }).unwrap());
 
     sleep(Duration::from_millis(500));
 

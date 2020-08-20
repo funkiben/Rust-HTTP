@@ -7,14 +7,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use my_http::client::write_request;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
-use my_http::server::{Config, Server, write_response};
+use my_http::server::{Config, write_response, Router};
 use my_http::server::ListenerResult::{Next, SendResponseArc};
 
 use crate::util::curl;
+use my_http::server;
 
 pub fn test_server(config: Config, num_connections: usize, num_loops_per_connection: usize, sleeps_between_requests: bool, messages: Vec<(Request, Response)>) {
     let addr = config.addr;
-    create_and_start_server(config, &messages);
+    start_server(config, &messages);
 
     let messages: Vec<(Request, Vec<u8>)> = messages.into_iter().map(|(req, res)| {
         let mut bytes: Vec<u8> = vec![];
@@ -65,7 +66,7 @@ pub fn test_server(config: Config, num_connections: usize, num_loops_per_connect
 pub fn test_server_with_curl(config: Config, num_connections: usize, messages: Vec<(Request, Response)>, https: bool) {
     let addr = config.addr;
 
-    create_and_start_server(config, &messages);
+    start_server(config, &messages);
 
     let messages = Arc::new(messages);
 
@@ -87,14 +88,21 @@ pub fn test_server_with_curl(config: Config, num_connections: usize, messages: V
     }
 }
 
-fn create_and_start_server(server_config: Config, messages: &Vec<(Request, Response)>) {
-    let mut server = Server::new(server_config);
+fn start_server(mut server_config: Config, messages: &Vec<(Request, Response)>) {
+    server_config.router = get_router(messages);
+
+    spawn(|| server::start(server_config));
+    sleep(Duration::from_millis(100));
+}
+
+fn get_router(messages: &Vec<(Request, Response)>) -> Router {
+    let mut router = Router::new();
 
     for (request, response) in messages {
         let uri = &request.uri;
         let response = Arc::new(response.clone());
         let request = request.clone();
-        server.router.on(uri, move |_, req|
+        router.on(uri, move |_, req|
             if request.eq(req) {
                 SendResponseArc(response.clone())
             } else {
@@ -103,6 +111,5 @@ fn create_and_start_server(server_config: Config, messages: &Vec<(Request, Respo
         );
     }
 
-    spawn(|| server.start());
-    sleep(Duration::from_millis(100));
+    router
 }
