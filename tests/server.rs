@@ -25,9 +25,8 @@ mod util;
 fn many_requests_with_short_headers_and_short_bodies() {
     test_server(
         Config {
-            addr: "localhost:7000",
+            addr: "0.0.0.0:7000",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         13, 11, true,
@@ -75,9 +74,8 @@ fn many_connections_and_many_large_messages() {
     let test_jpg = std::fs::read("./tests/files/test.jpg").unwrap();
     test_server(
         Config {
-            addr: "localhost:7001",
+            addr: "0.0.0.0:7001",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         15, 15, true,
@@ -146,9 +144,8 @@ fn many_connections_and_many_large_messages() {
 #[test]
 fn curl_request() {
     let mut server = Server::new(Config {
-        addr: "localhost:7011",
+        addr: "0.0.0.0:7011",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -164,7 +161,7 @@ fn curl_request() {
 
     sleep(Duration::from_millis(1000));
 
-    let output = curl::request("localhost:7011", &Request {
+    let output = curl::request("0.0.0.0:7011", &Request {
         uri: "/".to_string(),
         method: Method::GET,
         headers: header_map![],
@@ -179,9 +176,8 @@ fn curl_many_connections_and_many_large_messages() {
     let test_html = std::fs::read("./tests/files/test.html").unwrap();
     test_server_with_curl(
         Config {
-            addr: "localhost:7010",
+            addr: "0.0.0.0:7010",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         20,
@@ -249,9 +245,8 @@ fn curl_many_connections_and_many_large_messages() {
 fn many_connections_with_one_simple_request() {
     test_server(
         Config {
-            addr: "localhost:7002",
+            addr: "0.0.0.0:7002",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         200, 1, false,
@@ -276,9 +271,8 @@ fn many_connections_with_one_simple_request() {
 fn many_connections_with_many_simple_requests() {
     test_server(
         Config {
-            addr: "localhost:7003",
+            addr: "0.0.0.0:7003",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         10, 10, true,
@@ -303,9 +297,8 @@ fn many_connections_with_many_simple_requests() {
 fn many_concurrent_connections_with_many_simple_requests_no_delay() {
     test_server(
         Config {
-            addr: "localhost:7004",
+            addr: "0.0.0.0:7004",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: None,
         },
         10, 10, false,
@@ -329,9 +322,8 @@ fn many_concurrent_connections_with_many_simple_requests_no_delay() {
 #[test]
 fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:7005",
+        addr: "0.0.0.0:7005",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -341,7 +333,7 @@ fn infinite_connection() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7005").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7005").unwrap();
 
     loop {
         if let Err(_) = client.write(b"blah") {
@@ -359,9 +351,8 @@ fn infinite_connection() {
 #[test]
 fn infinite_connection_with_sleeps() {
     let server = Server::new(Config {
-        addr: "localhost:7012",
+        addr: "0.0.0.0:7012",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -371,7 +362,7 @@ fn infinite_connection_with_sleeps() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7012").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7012").unwrap();
 
     loop {
         if let Err(_) = client.write(b"blah") {
@@ -390,9 +381,8 @@ fn infinite_connection_with_sleeps() {
 #[test]
 fn infinite_headers() {
     let server = Server::new(Config {
-        addr: "localhost:7006",
+        addr: "0.0.0.0:7006",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -402,7 +392,7 @@ fn infinite_headers() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7006").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7006").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\n").unwrap();
 
@@ -422,9 +412,8 @@ fn infinite_headers() {
 #[test]
 fn infinite_header_value() {
     let server = Server::new(Config {
-        addr: "localhost:7007",
+        addr: "0.0.0.0:7007",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -434,7 +423,7 @@ fn infinite_header_value() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7007").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7007").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\nheader: ").unwrap();
 
@@ -454,9 +443,8 @@ fn infinite_header_value() {
 #[test]
 fn infinite_chunked_body() {
     let server = Server::new(Config {
-        addr: "localhost:7008",
+        addr: "0.0.0.0:7008",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -466,7 +454,7 @@ fn infinite_chunked_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7008").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7008").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n").unwrap();
 
@@ -485,10 +473,9 @@ fn infinite_chunked_body() {
 
 #[test]
 fn insanely_huge_body() {
-    let server = Server::new(Config {
-        addr: "localhost:7009",
+    let mut server = Server::new(Config {
+        addr: "0.0.0.0:7009",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: None,
     });
 
@@ -498,7 +485,7 @@ fn insanely_huge_body() {
 
     sleep(Duration::from_millis(500));
 
-    let mut client = TcpStream::connect("localhost:7009").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7009").unwrap();
 
     client.write(b"GET / HTTP/1.1\r\ncontent-length: 99999999\r\n\r\n").unwrap();
 

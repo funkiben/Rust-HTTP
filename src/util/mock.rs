@@ -94,6 +94,33 @@ impl Write for MockWriter {
     }
 }
 
+pub struct MockStream<R, W> {
+    pub reader: R,
+    pub writer: W,
+}
+
+impl<R, W> MockStream<R, W> {
+    pub fn new(reader: R, writer: W) -> MockStream<R, W> {
+        MockStream { reader, writer }
+    }
+}
+
+impl<R: Read, W> Read for MockStream<R, W> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl<R, W: Write> Write for MockStream<R, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.writer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Read;

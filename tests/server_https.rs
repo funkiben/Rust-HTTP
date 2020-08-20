@@ -22,9 +22,8 @@ mod util;
 #[test]
 fn curl_request() {
     let mut server = Server::new(Config {
-        addr: "localhost:8000",
+        addr: "0.0.0.0:8000",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -40,7 +39,7 @@ fn curl_request() {
 
     sleep(Duration::from_millis(1000));
 
-    let output = curl::request("localhost:8000", &Request {
+    let output = curl::request("0.0.0.0:8000", &Request {
         uri: "/".to_string(),
         method: Method::GET,
         headers: header_map![],
@@ -53,9 +52,8 @@ fn curl_request() {
 #[test]
 fn curl_multiple_requests_same_connection() {
     let mut server = Server::new(Config {
-        addr: "localhost:8001",
+        addr: "0.0.0.0:8001",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -72,7 +70,7 @@ fn curl_multiple_requests_same_connection() {
     sleep(Duration::from_millis(1000));
 
     let output = curl::requests(
-        "localhost:8001",
+        "0.0.0.0:8001",
         &vec![&Request {
             uri: "/".to_string(),
             method: Method::GET,
@@ -88,9 +86,8 @@ fn curl_multiple_requests_same_connection() {
 fn curl_multiple_concurrent_connections_with_many_requests() {
     test_server::test_server_with_curl(
         Config {
-            addr: "localhost:8002",
+            addr: "0.0.0.0:8002",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: Some(get_tsl_config()),
         },
         50,
@@ -117,9 +114,8 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
 fn curl_multiple_concurrent_connections_with_single_requests() {
     test_server::test_server_with_curl(
         Config {
-            addr: "localhost:8005",
+            addr: "0.0.0.0:8005",
             connection_handler_threads: 5,
-            read_timeout: Duration::from_millis(500),
             tls_config: Some(get_tsl_config()),
         },
         200,
@@ -141,9 +137,8 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
 #[test]
 fn infinite_connection() {
     let server = Server::new(Config {
-        addr: "localhost:8003",
+        addr: "0.0.0.0:8003",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(500),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -151,7 +146,7 @@ fn infinite_connection() {
 
     sleep(Duration::from_millis(1000));
 
-    let mut client = TcpStream::connect("localhost:8003").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:8003").unwrap();
 
     loop {
         if let Err(_) = client.write_all(b"blahblahblah") {
@@ -163,9 +158,8 @@ fn infinite_connection() {
 #[test]
 fn normal_http_message() {
     let server = Server::new(Config {
-        addr: "localhost:8004",
+        addr: "0.0.0.0:8004",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(1000),
         tls_config: Some(get_tsl_config()),
     });
 
@@ -173,7 +167,7 @@ fn normal_http_message() {
 
     sleep(Duration::from_millis(1000));
 
-    let mut client = TcpStream::connect("localhost:8004").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:8004").unwrap();
 
     client.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
 

@@ -1,26 +1,29 @@
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::io::{ErrorKind, Read, Write};
+use std::net::{Shutdown, SocketAddr};
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 
-use rustls::{ServerConfig, ServerSession};
+use mio::{Events, Interest, Poll, Token};
+use mio::net::{TcpListener, TcpStream};
+use rustls::{ServerConfig, ServerSession, Session};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::parse::error::ParsingError;
-use crate::parse::parse::{Parse, ParseStatus};
-use crate::parse::request::RequestParser;
 use crate::server::config::Config;
+use crate::server::connection::Connection;
+use crate::server::connection::ReadRequestResult::{Closed, NotReady, Ready};
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
-use crate::util::tls_stream::TlsStream;
+
+const SERVER_TOKEN: Token = Token(0);
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
-
-const BUF_WRITER_CAPACITY: usize = 1024;
 
 /// An HTTP server.
 pub struct Server {
@@ -28,8 +31,6 @@ pub struct Server {
     pub config: Config,
     /// The router used for handling requests received from connections
     pub router: Router,
-    /// The TLS config as an arc.
-    tls_config: Option<Arc<ServerConfig>>,
 }
 
 impl Server {
@@ -38,70 +39,100 @@ impl Server {
         Server {
             config,
             router: Router::new(),
-            tls_config: None,
         }
     }
 
     /// Starts the HTTP server. This function will block and listen for new connections.
     pub fn start(mut self) -> std::io::Result<()> {
-        let listener = TcpListener::bind(self.config.addr)?;
+        let mut listener = TcpListener::bind(self.config.addr.parse().expect("Invalid socket address"))?;
 
         let thread_pool = ThreadPool::new(self.config.connection_handler_threads);
 
-        self.tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
+        let tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
 
         let server = Arc::new(self);
+        let mut connections = HashMap::new();
 
-        for stream in listener.incoming() {
-            match stream {
-                Err(error) => println!("Error unwrapping new connection: {}", error),
-                Ok(stream) => {
-                    let server = Arc::clone(&server);
-                    thread_pool.execute(move || server.handle_connection(stream))
+        let mut next_token = 1;
+
+        let mut poll = Poll::new()?;
+        poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
+
+        let mut events = Events::with_capacity(128);
+
+        loop {
+            poll.poll(&mut events, None)?;
+
+            for event in &events {
+                match event.token() {
+                    SERVER_TOKEN => {
+                        loop {
+                            match listener.accept() {
+                                Ok((mut stream, addr)) => {
+                                    let token = Token(next_token);
+                                    next_token += 1;
+                                    poll.registry().register(&mut stream, token, Interest::READABLE)?;
+
+                                    let connection = if let Some(ref cfg) = tls_config {
+                                        ClientConnection::new_tls(addr, stream, cfg)
+                                    } else {
+                                        ClientConnection::new_plaintext(addr, stream)
+                                    };
+
+                                    connections.insert(token, Arc::new(Mutex::new(connection)));
+                                }
+                                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                                Err(err) => println!("Error unwrapping connection {:?}", err)
+                            }
+                        }
+                    }
+                    token if event.is_read_closed() => {
+                        connections.remove(&token);
+                    }
+                    token => {
+                        let connection = connections.get(&token).cloned();
+                        if let Some(connection) = connection {
+                            let server = Arc::clone(&server);
+                            thread_pool.execute(move || server.handle_connection(connection));
+                        }
+                    }
                 }
             }
         }
-
-        Ok(())
     }
 
-    /// Handles a new connection.
-    fn handle_connection(&self, stream: TcpStream) {
-        stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
+    fn handle_connection(&self, connection: Arc<Mutex<ClientConnection>>) {
+        let mut connection = connection.lock().unwrap();
 
-        if let Some(ref tls_config) = self.tls_config {
-            self.handle_tls_connection(tls_config, stream);
-        } else {
-            self.handle_plaintext_connection(stream);
+        if !connection.is_shutdown() {
+            let close = match connection.deref_mut() {
+                ClientConnection::PlainText(_, conn) => respond_to_requests(conn, &self.router),
+                ClientConnection::Tls(_, conn) => respond_to_requests(conn, &self.router),
+            };
+            if close {
+                connection.shutdown().unwrap_or_default();
+            }
         }
-    }
-
-    /// Handles a new connection using plaintext.
-    fn handle_plaintext_connection(&self, stream: TcpStream) {
-        respond_to_requests(&stream, &stream, &self.router);
-    }
-
-    /// Handles a new connection using TLS.
-    fn handle_tls_connection(&self, tls_config: &Arc<ServerConfig>, stream: TcpStream) {
-        let stream = TlsStream::new(stream, ServerSession::new(tls_config));
-        respond_to_requests(&stream, &stream, &self.router);
     }
 }
 
-/// Uses the given router to respond to requests read from reader. Writes responses to writer.
-/// If the router has no route for a request, then a 404 response with no body is returned.
-/// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
-    let mut writer = BufWriter::with_capacity(BUF_WRITER_CAPACITY, writer);
-
-    let result = read_requests(reader, |request| {
-        let write_result = write_response_from_router(&mut writer, router, &request);
-        should_close_after_response(&request) || write_result.is_err()
-    });
-
-    if let Err(error) = result {
-        // we dont really care if the response to an invalid request can't be written
-        write_error_response(&mut writer, error).unwrap_or(());
+/// Responds to requests in the given connection using the given router. Returns true if the connection should be dropped.
+fn respond_to_requests<T: Read + Write>(connection: &mut Connection<T>, router: &Router) -> bool {
+    loop {
+        match connection.read_request() {
+            Ok(Ready(request)) => {
+                let write_result = write_response_from_router(connection, router, &request);
+                if write_result.is_err() || should_close_after_response(&request) {
+                    return true;
+                }
+            }
+            Ok(NotReady) => return false,
+            Ok(Closed) => return true,
+            Err(error) => {
+                write_error_response(connection, error).unwrap_or_default();
+                return true;
+            }
+        }
     }
 }
 
@@ -126,34 +157,6 @@ fn should_close_after_response(request: &Request) -> bool {
     request.headers.contains_header_value(&CONNECTION, "close")
 }
 
-/// Reads requests from the given reader until there is an invalid request or the connection is closed.
-/// Calls "on_request" for each request read.
-/// If "on_request" returns true, the function will return with Ok and stop reading future requests.
-fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), ParsingError> {
-    let mut reader = BufReader::new(reader);
-    let mut request_parser = RequestParser::new();
-
-    loop {
-        let result = request_parser.parse(&mut reader);
-
-        match result {
-            Ok(ParseStatus::Done(request)) => if on_request(request) { return Ok(()); } else { request_parser = RequestParser::new() },
-            Ok(ParseStatus::Blocked(_)) => return Ok(()),
-            Err(ParsingError::Eof) => return Ok(()),
-            Err(ParsingError::Reading(ref error)) if is_io_error_ok(error) => return Ok(()),
-            res => return res.map(|_| {})
-        }
-    }
-}
-
-/// Checks if the given IO error is OK.
-fn is_io_error_ok(error: &Error) -> bool {
-    // WouldBlock and TimedOut are for read timeouts. Linux uses WouldBlock, Windows uses TimedOut.
-    error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
-        // ConnectionAborted is caused from https streams that have closed
-        || error.kind() == ErrorKind::ConnectionAborted
-}
-
 /// Writes the response as bytes to the given writer.
 pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
     // write! will call write multiple times and does not flush
@@ -169,6 +172,44 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     Ok(())
 }
 
+enum ClientConnection {
+    PlainText(bool, Connection<TcpStream>),
+    Tls(bool, Connection<rustls::StreamOwned<ServerSession, TcpStream>>),
+}
+
+impl ClientConnection {
+    fn new_plaintext(addr: SocketAddr, stream: TcpStream) -> ClientConnection {
+        ClientConnection::PlainText(false, Connection::new(addr, stream))
+    }
+
+    fn new_tls(addr: SocketAddr, stream: TcpStream, config: &Arc<ServerConfig>) -> ClientConnection {
+        ClientConnection::Tls(false, Connection::new(addr, rustls::StreamOwned::new(ServerSession::new(config), stream)))
+    }
+
+    fn is_shutdown(&self) -> bool {
+        match self {
+            ClientConnection::PlainText(shutdown, _) => *shutdown,
+            ClientConnection::Tls(shutdown, _) => *shutdown
+        }
+    }
+
+    fn shutdown(&mut self) -> std::io::Result<()> {
+        match self {
+            ClientConnection::PlainText(shutdown, conn) => {
+                *shutdown = true;
+                conn.stream_ref().shutdown(Shutdown::Both)
+            }
+            ClientConnection::Tls(shutdown, conn) => {
+                *shutdown = true;
+                conn.stream_mut().sess.send_close_notify();
+                conn.stream_mut().flush().unwrap_or_default();
+                conn.stream_ref().sock.shutdown(Shutdown::Both)
+            }
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -180,15 +221,16 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status;
     use crate::common::status::Status;
+    use crate::server::connection::Connection;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
-    use crate::server::server::{respond_to_requests, write_response};
-    use crate::util::mock::{MockReader, MockWriter};
+    use crate::server::server::{write_response, respond_to_requests};
+    use crate::util::mock::{MockReader, MockStream, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader::from_strs(input);
-
-        let mut writer = MockWriter::new();
+        let writer = MockWriter::new();
+        let stream = MockStream::new(reader, writer);
 
         let mut router = Router::new();
 
@@ -201,9 +243,11 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        respond_to_requests(reader, &mut writer, &router);
+        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), stream);
 
-        let actual_output = writer.flushed.concat();
+        respond_to_requests(&mut connection, &router);
+
+        let actual_output = connection.stream_ref().writer.flushed.concat();
         let actual_output = String::from_utf8_lossy(&actual_output);
 
         assert_eq!(expected_output, actual_output);

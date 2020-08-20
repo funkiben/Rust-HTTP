@@ -5,5 +5,5 @@ pub mod thread_pool;
 #[cfg(test)]
 pub mod mock;
 
-/// Stream using TLS.
-pub mod tls_stream;
+/// A stream with buffers for reading and writing.
+pub mod buf_stream;

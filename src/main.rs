@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use my_http::common::{header, status};
 use my_http::common::response::Response;
@@ -15,7 +14,6 @@ fn main() -> Result<(), Error> {
     let mut server = Server::new(Config {
         addr: "0.0.0.0:80",
         connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(1000),
         tls_config: None,
     });
 
@@ -29,7 +27,7 @@ fn main() -> Result<(), Error> {
     });
 
     server.router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
-    server.router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
+    server.router.route("/", file_router("/Users/Ben/Code/React-Tetris/build/"));
 
     server.start()
 }
