@@ -51,7 +51,7 @@ impl Server {
         let tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
 
         let server = Arc::new(self);
-        let mut connections = HashMap::new();
+        let mut connections = HashMap::with_capacity(128);
 
         let mut next_token = 1;
 
