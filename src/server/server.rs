@@ -224,7 +224,7 @@ mod tests {
     use crate::server::connection::Connection;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
-    use crate::server::server::{write_response, respond_to_requests};
+    use crate::server::server::{respond_to_requests, write_response};
     use crate::util::mock::{MockReader, MockStream, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
