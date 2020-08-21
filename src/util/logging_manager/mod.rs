@@ -3,17 +3,24 @@ mod time_manager;
 use std::fs::{create_dir, read_dir, remove_file, DirEntry, OpenOptions};
 use std::io::{Error, Write};
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::thread;
+use log::{Metadata, Record, Level, SetLoggerError, LevelFilter};
 
 /// Struct holding sender to dedicated logging thread
 pub struct LoggingService {
-    sender: mpsc::Sender<LoggingCommands>,
+    sender: Mutex<mpsc::Sender<LoggingCommands>>,
+}
+
+// struct holding the body of a message to log
+struct MessageBody {
+    level: String,
+    content: String,
 }
 
 enum LoggingCommands {
     Kill,
-    Message(String),
+    Message(MessageBody),
 }
 
 /// Configuration struct for Logging service
@@ -25,65 +32,80 @@ pub struct LoggingConfig {
 }
 
 impl LoggingService {
+
     /// Create a new LoggingService instance holding the sender to the dedicated logging thread.
     ///
     /// # Arguments
     ///
     /// * `options` - LoggingConfig struct containing the options for the new logging service instance.
     ///
-    pub fn new(options: LoggingConfig) -> LoggingService {
+    pub fn new(options: LoggingConfig) -> Result<(), SetLoggerError> {
         let (sender, receiver) = mpsc::channel();
 
         // kick off logging thread
         thread::spawn(move || loop {
             match receiver.recv().unwrap() {
                 LoggingCommands::Message(message) => {
-                    log(message.as_str(), &options)
+                    log(message, &options)
                         .expect("Logging service failed when receiving message.");
                 }
                 LoggingCommands::Kill => break,
             }
         });
 
-        LoggingService { sender }
+        // box logger
+        let logger = Box::new(LoggingService { sender: Mutex::new(sender) });
+
+        // set global logger
+        log::set_boxed_logger(logger)
+            .map(|()| log::set_max_level(LevelFilter::Info))?;
+
+        Ok(())
+
     }
 
-    /// Log a message using the LoggingService
-    ///
-    /// A file will be created in the logging directory specified by the logging config containing the message.
-    /// The file will be titled with the current unix date in the format "YYYY_MM_DD.log".
-    /// The message will be preceded with a unix timestamp in the format "[YYYY-MM-DD HH:MM:SS]"
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - Message to be logged.
-    ///
-    pub fn log(&self, message: String) {
-        self.sender
-            .send(LoggingCommands::Message(message))
-            .expect("Failed to send message to logging service.");
-    }
-
-    /// Kill the logging service.
-    ///
-    pub fn kill(&self) {
-        self.sender
-            .send(LoggingCommands::Kill)
-            .expect("Failed to send kill message to logging service.");
-    }
 }
 
 impl Drop for LoggingService {
     fn drop(&mut self) {
-        self.sender
+        self.sender.lock().unwrap()
             .send(LoggingCommands::Kill)
             .expect("Failed to kill logging service on drop.");
     }
 }
 
+impl log::Log for LoggingService {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+
+    fn log(&self, record: &Record) {
+
+        // convert level to string
+        let level = match record.level() {
+            Level::Error => String::from(" ERROR "),
+            Level::Debug => String::from(" DEBUG "),
+            Level::Info => String::from(" INFO  "),
+            Level::Trace => String::from(" TRACE "),
+            Level::Warn => String::from(" WARN  "),
+        };
+
+        self.sender.lock().unwrap()
+            .send(LoggingCommands::Message(MessageBody { content: record.args().to_string(), level}))
+            .expect("Failed to send message to logging service.");
+    }
+
+    fn flush(&self) {
+        unimplemented!()
+    }
+}
+
 // write a message to a log file
 // writes the given message to a log file for the current date in the logging directory
-fn log(message: &str, options: &LoggingConfig) -> Result<(), Error> {
+// a file will be created in the logging directory specified by the logging config containing the message
+// the file will be titled with the current unix date in the format "YYYY_MM_DD.log"
+// the message will be preceded with a unix timestamp in the format "[YYYY-MM-DD HH:MM:SS]"
+fn log(message_body: MessageBody, options: &LoggingConfig) -> Result<(), Error> {
     // create logging dir if needed
     if !options.logging_directory.exists() {
         create_dir(&options.logging_directory)?;
@@ -103,7 +125,7 @@ fn log(message: &str, options: &LoggingConfig) -> Result<(), Error> {
         .open(log_file_path)?;
 
     // write message
-    file.write_all((time_manager::curr_timestamp() + " " + message + "\n").as_bytes())
+    file.write_all((time_manager::curr_timestamp() + message_body.level.as_str() + message_body.content.as_str() + "\n").as_bytes())
 }
 
 // checks the size of the directory, deleting oldest files if too big
@@ -163,20 +185,20 @@ fn get_sorted_files_from_dir(logging_directory: &Path) -> Result<Vec<DirEntry>, 
 mod tests {
     use super::*;
     use std::fs::{remove_dir_all, File};
-    use std::io::Result;
     use std::thread;
     use std::time;
+    use std::error::Error;
+    use log::*;
 
     #[test]
-    fn test_log() -> Result<()> {
+    fn test_log() -> Result<(), Box<dyn Error>> {
         let logging_directory = Path::new("./test_logs/");
-        let logging_service = LoggingService::new(LoggingConfig {
+        LoggingService::new(LoggingConfig {
             logging_directory,
             max_dir_size: 10000,
-        });
+        })?;
         let current_date = time_manager::curr_datestamp();
-        logging_service.log(String::from("test message"));
-        logging_service.log(String::from("kill_logging"));
+        info!("test message");
         thread::sleep(time::Duration::from_millis(10));
         assert_eq!(
             true,
@@ -191,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sorted_files() -> Result<()> {
+    fn test_sorted_files() -> std::io::Result<()> {
         let curr_date = format!("{}.log", time_manager::curr_datestamp());
         let files = ["2020_01_12.log", "2020_03_14.log", curr_date.as_str()];
         let logging_directory = Path::new("./test_logs2/");
