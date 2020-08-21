@@ -41,6 +41,7 @@ impl<D: Deframe<T>, T> Parse<T> for D {
     }
 }
 
+/// Checks if the IO error is fatal or not.
 fn can_continue_after_error(err: &Error) -> bool {
     err.kind() == ErrorKind::WouldBlock
 }

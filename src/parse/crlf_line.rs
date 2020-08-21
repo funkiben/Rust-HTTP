@@ -13,6 +13,7 @@ const MAX_LINE_SIZE: usize = 512;
 pub struct CrlfLineParser(CrlfLineOrEofParser);
 
 impl CrlfLineParser {
+    /// Creates a new CRLF line parser.
     pub fn new() -> CrlfLineParser {
         CrlfLineParser(CrlfLineOrEofParser::new())
     }
@@ -33,6 +34,7 @@ impl Parse<String> for CrlfLineParser {
 pub struct CrlfLineOrEofParser(LineOrEofDeframer);
 
 impl CrlfLineOrEofParser {
+    /// Creates a new CRLF line or EOF parser.
     pub fn new() -> CrlfLineOrEofParser {
         CrlfLineOrEofParser(LineOrEofDeframer::new())
     }
@@ -50,6 +52,7 @@ impl Parse<Option<String>> for CrlfLineOrEofParser {
     }
 }
 
+/// Parses the given line as a CRLF terminated line. Assumes the given string already ends with \n.
 fn parse_crlf_line(mut line: String) -> Result<String, ParsingError> {
     if let Some('\r') = line.pop() {
         Ok(line)

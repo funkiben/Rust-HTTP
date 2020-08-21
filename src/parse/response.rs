@@ -13,6 +13,7 @@ use crate::parse::parse::ParseStatus::{Blocked, Done};
 pub struct ResponseParser(MessageParser<FirstLineParser, Status>);
 
 impl ResponseParser {
+    /// Returns a new response parser.
     pub fn new() -> ResponseParser {
         ResponseParser(MessageParser::new(FirstLineParser::new(), true))
     }
@@ -27,9 +28,11 @@ impl Parse<Response> for ResponseParser {
     }
 }
 
+/// Parser for the first line of a response.
 struct FirstLineParser(CrlfLineParser);
 
 impl FirstLineParser {
+    /// Creates a new parser for the first line of a response.
     fn new() -> FirstLineParser {
         FirstLineParser(CrlfLineParser::new())
     }
@@ -44,7 +47,7 @@ impl Parse<Status> for FirstLineParser {
     }
 }
 
-
+/// Parses the given string as the first line of a response. Verifies the HTTP version and returns a status.
 fn parse_first_line(line: String) -> Result<Status, ParsingError> {
     let mut split = line.split(" ");
 

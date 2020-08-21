@@ -25,10 +25,15 @@ impl<R, T> MessageParser<R, T> {
     }
 }
 
+/// The state of a message parser.
 enum State<R, T> {
+    /// Parsing the first line of the message.
     FirstLine(R),
+    /// Parsing the headers.
     Headers(T, HeadersParser),
+    /// Parsing the body.
     Body(T, HeaderMap, BodyParser),
+    /// Parsing is complete.
     Finished(T, HeaderMap, Vec<u8>),
 }
 
@@ -52,6 +57,7 @@ impl<T, R: Parse<T>> Parse<(T, HeaderMap, Vec<u8>)> for MessageParser<R, T> {
     }
 }
 
+/// Parses the first line and returns the next state if possible.
 fn first_line_state<T, R: Parse<T>>(reader: &mut impl BufRead, parser: R) -> ParseResult<State<R, T>, State<R, T>> {
     Ok(match parser.parse(reader)? {
         Done(first_line) => Done(Headers(first_line, HeadersParser::new())),
@@ -59,6 +65,7 @@ fn first_line_state<T, R: Parse<T>>(reader: &mut impl BufRead, parser: R) -> Par
     })
 }
 
+/// Parses the headers and returns the next state if possible.
 fn headers_state<T, R>(reader: &mut impl BufRead, first_line: T, parser: HeadersParser, read_body_if_no_content_length: bool) -> ParseResult<State<R, T>, State<R, T>> {
     Ok(match parser.parse(reader)? {
         Done(headers) => {
@@ -69,6 +76,7 @@ fn headers_state<T, R>(reader: &mut impl BufRead, first_line: T, parser: Headers
     })
 }
 
+/// Parses the body and returns the next state if possible.
 fn body_state<T, R>(reader: &mut impl BufRead, first_line: T, headers: HeaderMap, parser: BodyParser) -> ParseResult<State<R, T>, State<R, T>> {
     Ok(match parser.parse(reader)? {
         Done(body) => Done(Finished(first_line, headers, body)),

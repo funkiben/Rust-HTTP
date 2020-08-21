@@ -3,7 +3,7 @@ use std::io::BufRead;
 use crate::common::header::{HeaderMap, HeaderMapOps};
 use crate::common::header;
 use crate::parse::body::BodyParser::{Chunked, Empty, UntilEof, WithSize};
-use crate::parse::body::chunked::ChunkParser;
+use crate::parse::body::chunked::ChunksParser;
 use crate::parse::deframe::bytes::BytesDeframer;
 use crate::parse::deframe::bytes_until_eof::BytesUntilEofDeframer;
 use crate::parse::deframe::deframe::Deframe;
@@ -19,11 +19,13 @@ const MAX_BODY_SIZE: usize = 3 * 1024 * 1024; // 3 megabytes
 pub enum BodyParser {
     WithSize(BytesDeframer),
     UntilEof(BytesUntilEofDeframer),
-    Chunked(ChunkParser),
+    Chunked(ChunksParser),
     Empty,
 }
 
 impl BodyParser {
+    /// Creates a new body parser.
+    /// If read_if_no_content_length is true and no content length is present, then a "UntilEof" BodyParser is returned.
     pub fn new(headers: &HeaderMap, read_if_no_content_length: bool) -> Result<BodyParser, ParsingError> {
         if let Some(size) = get_content_length(headers) {
             let size = size?;
@@ -32,7 +34,7 @@ impl BodyParser {
             }
             Ok(WithSize(BytesDeframer::new(size)))
         } else if is_chunked_transfer_encoding(headers) {
-            Ok(Chunked(ChunkParser::new()))
+            Ok(Chunked(ChunksParser::new()))
         } else if read_if_no_content_length {
             Ok(UntilEof(BytesUntilEofDeframer::new()))
         } else {
@@ -40,6 +42,7 @@ impl BodyParser {
         }
     }
 
+    /// Gets the body data collected so far.
     fn data_so_far(&self) -> usize {
         match self {
             WithSize(parser) => parser.read_so_far(),
@@ -76,6 +79,12 @@ impl Parse<Vec<u8>> for BodyParser {
     }
 }
 
+/// Chunked transfer-encoding body parser.
+/// A chunked body might look like:
+/// A\r\n
+/// 0123456789\r\n
+/// 0\r\n
+/// \r\n
 mod chunked {
     use std::io::BufRead;
 
@@ -87,31 +96,39 @@ mod chunked {
     use crate::parse::parse::{Parse, ParseResult};
     use crate::parse::parse::ParseStatus::{Blocked, Done};
 
-    pub struct ChunkParser {
+    /// A parser for chunked transfer-encoding body.
+    pub struct ChunksParser {
         body: Vec<u8>,
         state: State,
     }
 
+    /// The state of the chunk parser.
     enum State {
+        /// The size of the chunk is being parsed.
         Size(CrlfLineParser),
+        /// The content of the chunk is being parsed.
         Data(BytesDeframer),
+        /// The tailing CRLF after the data is being parsed.
         TailingCrlf(CrlfLineParser, bool),
+        /// A 0 length chunk has been parsed last and there are no more chunks to parse.
         Finished,
     }
 
-    impl ChunkParser {
-        pub fn new() -> ChunkParser {
-            ChunkParser { body: vec![], state: Size(CrlfLineParser::new()) }
+    impl ChunksParser {
+        /// Creates a new chunk parser.
+        pub fn new() -> ChunksParser {
+            ChunksParser { body: vec![], state: Size(CrlfLineParser::new()) }
         }
 
+        /// The size of the body collected by the chunk parser so far.
         pub fn data_so_far(&self) -> usize {
             self.body.len()
         }
     }
 
-    impl Parse<Vec<u8>> for ChunkParser {
+    impl Parse<Vec<u8>> for ChunksParser {
         fn parse(self, reader: &mut impl BufRead) -> ParseResult<Vec<u8>, Self> {
-            let ChunkParser { mut state, mut body } = self;
+            let ChunksParser { mut state, mut body } = self;
 
             loop {
                 let result = match state {
@@ -129,6 +146,7 @@ mod chunked {
         }
     }
 
+    /// Parses the size of a chunk and returns either a Data state or the current Size state if blocked.
     fn size_state(reader: &mut impl BufRead, parser: CrlfLineParser) -> ParseResult<State, State> {
         Ok(match parser.parse(reader)? {
             Done(raw) => Done(Data(BytesDeframer::new(parse_chunk_size(raw)?))),
@@ -136,6 +154,7 @@ mod chunked {
         })
     }
 
+    /// Parses the content of a chunk and returns either a TailingCrlf state or the current Data state if blocked.
     fn data_state(reader: &mut impl BufRead, parser: BytesDeframer, body: &mut Vec<u8>) -> ParseResult<State, State> {
         Ok(match parser.parse(reader)? {
             Done(ref mut data) => {
@@ -147,6 +166,8 @@ mod chunked {
         })
     }
 
+    /// Parses the tailing CRLF after a chunks content and returns either a Finished state, a Size state, or the current Data state if blocked.
+    /// Returns a parsing error if the CRLF contains any extra data before it.
     fn tailing_crlf_state(reader: &mut impl BufRead, parser: CrlfLineParser, is_last: bool) -> ParseResult<State, State> {
         Ok(match parser.parse(reader)? {
             Done(line) if !line.is_empty() => Err(ParsingError::BadSyntax)?,
@@ -156,6 +177,7 @@ mod chunked {
         })
     }
 
+    /// Parses the chunk size from the given string.
     fn parse_chunk_size(raw: String) -> Result<usize, ParsingError> {
         let size = usize::from_str_radix(&raw, 16).map_err(|_| ParsingError::InvalidChunkSize)?;
         if size > MAX_BODY_SIZE {

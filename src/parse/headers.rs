@@ -18,6 +18,7 @@ pub struct HeadersParser {
 }
 
 impl HeadersParser {
+    /// Creates a new headers parser.
     pub fn new() -> HeadersParser {
         HeadersParser { inner: CrlfLineParser::new(), headers: header_map![], read: 0 }
     }
