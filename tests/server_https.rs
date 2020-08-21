@@ -1,22 +1,22 @@
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
 use rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
 
+use my_http::{header_map, server};
 use my_http::common::header::CONTENT_LENGTH;
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
 use my_http::common::status;
-use my_http::{header_map, server};
 use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::SendResponse;
 use util::curl;
 use util::test_server;
-use std::sync::Arc;
 
 mod util;
 
@@ -36,7 +36,7 @@ fn curl_request() {
         addr: "0.0.0.0:8000",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-        router
+        router,
     }));
 
     sleep(Duration::from_millis(1000));
@@ -67,7 +67,7 @@ fn curl_multiple_requests_same_connection() {
         addr: "0.0.0.0:8001",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-        router
+        router,
     }));
 
     sleep(Duration::from_millis(1000));
@@ -92,7 +92,7 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
             addr: "0.0.0.0:8002",
             connection_handler_threads: 5,
             tls_config: Some(get_tsl_config()),
-            router: Router::new()
+            router: Router::new(),
         },
         50,
         vec![(
@@ -121,7 +121,7 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
             addr: "0.0.0.0:8005",
             connection_handler_threads: 5,
             tls_config: Some(get_tsl_config()),
-            router: Router::new()
+            router: Router::new(),
         },
         200,
         vec![(
@@ -145,7 +145,7 @@ fn infinite_connection() {
         addr: "0.0.0.0:8003",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-        router: Router::new()
+        router: Router::new(),
     }).unwrap());
 
     sleep(Duration::from_millis(1000));
@@ -165,7 +165,7 @@ fn normal_http_message() {
         addr: "0.0.0.0:8004",
         connection_handler_threads: 5,
         tls_config: Some(get_tsl_config()),
-        router: Router::new()
+        router: Router::new(),
     }));
 
     sleep(Duration::from_millis(1000));

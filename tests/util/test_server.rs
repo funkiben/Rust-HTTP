@@ -7,11 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use my_http::client::write_request;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
-use my_http::server::{Config, write_response, Router};
+use my_http::server::{Config, Router, write_response};
+use my_http::server;
 use my_http::server::ListenerResult::{Next, SendResponseArc};
 
 use crate::util::curl;
-use my_http::server;
 
 pub fn test_server(config: Config, num_connections: usize, num_loops_per_connection: usize, sleeps_between_requests: bool, messages: Vec<(Request, Response)>) {
     let addr = config.addr;

@@ -22,7 +22,7 @@ fn main() -> Result<(), Error> {
     });
 
     router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
-    router.route("/", file_router("/Users/Ben/Code/React-Tetris/build/"));
+    router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
     server::start(Config {
         addr: "0.0.0.0:80",

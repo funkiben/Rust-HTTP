@@ -27,7 +27,7 @@ fn many_requests_with_short_headers_and_short_bodies() {
             addr: "0.0.0.0:7000",
             connection_handler_threads: 5,
             tls_config: None,
-            router: Router::new()
+            router: Router::new(),
         },
         13, 11, true,
         vec![
@@ -77,7 +77,7 @@ fn many_connections_and_many_large_messages() {
             addr: "0.0.0.0:7001",
             connection_handler_threads: 5,
             tls_config: None,
-            router: Router::new()
+            router: Router::new(),
         },
         15, 15, true,
         vec![

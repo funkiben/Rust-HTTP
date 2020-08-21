@@ -1,11 +1,8 @@
-use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use mio::{Events, Interest, Poll, Token};
-use mio::event::Event;
-use mio::net::{TcpListener, TcpStream};
+use mio::net::TcpStream;
 use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
@@ -15,13 +12,17 @@ use crate::common::response::Response;
 use crate::parse::error::ParsingError;
 use crate::server::config::Config;
 use crate::server::connection::Connection;
-use crate::server::connection::ReadRequestResult::{Closed, NotReady, Ready};
+use crate::server::connection::ReadRequestResult::{BadData, Closed, NotReady, Ready};
+use crate::server::listen::listen;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
 use crate::util::tls_stream::TlsStream;
 
+/// Raw bytes for a request parsing error response.
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
+
+/// Raw bytes for a 404 not found response.
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
 /// Starts the HTTP server. This function will block and listen for new connections.
@@ -41,76 +42,7 @@ pub fn start(config: Config) -> std::io::Result<()> {
            })
 }
 
-fn listen<T>(addr: SocketAddr, make_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
-    const SERVER_TOKEN: Token = Token(0);
-
-    let mut listener = TcpListener::bind(addr)?;
-    let mut connections = HashMap::with_capacity(128);
-
-    let poll = Poll::new()?;
-    poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
-
-    let mut next_token = SERVER_TOKEN.0 + 1;
-
-    poll_events(
-        poll,
-        |poll, event|
-            match event.token() {
-                SERVER_TOKEN => {
-                    listen_until_blocked(&listener, |(mut stream, addr)| {
-                        let token = Token(next_token);
-                        next_token += 1;
-                        poll.registry().register(&mut stream, token, Interest::READABLE)?;
-
-                        connections.insert(token, make_connection(stream, addr));
-
-                        Ok(())
-                    });
-                }
-                token if event.is_read_closed() => {
-                    connections.remove(&token);
-                }
-                token => {
-                    connections.get(&token).map(&on_readable_connection);
-                }
-            },
-    )
-}
-
-fn make_client_connection(config: &Arc<Config>, stream: TcpStream, addr: SocketAddr) -> ClientConnection {
-    if let Some(ref cfg) = config.tls_config {
-        ClientConnection::new_tls(addr, stream, cfg)
-    } else {
-        ClientConnection::new_plaintext(addr, stream)
-    }
-}
-
-fn poll_events(mut poll: Poll, mut on_event: impl FnMut(&mut Poll, &Event)) -> std::io::Result<()> {
-    let mut events = Events::with_capacity(128);
-
-    loop {
-        poll.poll(&mut events, None)?;
-
-        for event in &events {
-            on_event(&mut poll, event);
-        }
-    }
-}
-
-fn listen_until_blocked(listener: &TcpListener, mut on_connection: impl FnMut((TcpStream, SocketAddr)) -> std::io::Result<()>) {
-    loop {
-        match listener.accept() {
-            Ok(conn) => {
-                if let Some(err) = on_connection(conn).err() {
-                    println!("Error initializing connection: {:?}", err)
-                }
-            }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-            Err(err) => println!("Error unwrapping connection: {:?}", err)
-        }
-    }
-}
-
+/// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
 fn handle_read_ready_connection(config: Arc<Config>, connection: Arc<Mutex<Option<ClientConnection>>>) {
     let mut lock = connection.lock().unwrap();
 
@@ -122,19 +54,28 @@ fn handle_read_ready_connection(config: Arc<Config>, connection: Arc<Mutex<Optio
     }
 }
 
+/// Makes a new client connection value out of the given stream and address.
+fn make_client_connection(config: &Arc<Config>, stream: TcpStream, addr: SocketAddr) -> ClientConnection {
+    if let Some(ref cfg) = config.tls_config {
+        ClientConnection::new_tls(addr, stream, cfg)
+    } else {
+        ClientConnection::new_plaintext(addr, stream)
+    }
+}
+
 /// Responds to requests in the given connection using the given router. Returns true if the connection should be dropped.
 fn respond_to_requests<T: Read + Write>(connection: &mut Connection<T>, router: &Router) -> bool {
     loop {
         match connection.read_request() {
-            Ok(Ready(request)) => {
+            Ready(request) => {
                 let write_result = write_response_from_router(connection, router, &request);
                 if write_result.is_err() || should_close_after_response(&request) {
                     return true;
                 }
             }
-            Ok(NotReady) => return false,
-            Ok(Closed) => return true,
-            Err(error) => {
+            NotReady => return false,
+            Closed => return true,
+            BadData(error) => {
                 write_error_response(connection, error).unwrap_or_default();
                 return true;
             }
@@ -178,21 +119,24 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     Ok(())
 }
 
-
+/// A connection to a client. The Plaintext variant uses a normal un-encrypted stream, and the Tls variant uses a TLS-encrypted stream.
 enum ClientConnection {
     PlainText(Connection<TcpStream>),
     Tls(Connection<TlsStream<ServerSession, TcpStream>>),
 }
 
 impl ClientConnection {
+    /// Creates a new plaintext connection.
     fn new_plaintext(addr: SocketAddr, stream: TcpStream) -> ClientConnection {
         ClientConnection::PlainText(Connection::new(addr, stream))
     }
 
+    /// Creates a new TLS encrypted stream with the given config.
     fn new_tls(addr: SocketAddr, stream: TcpStream, config: &Arc<ServerConfig>) -> ClientConnection {
         ClientConnection::Tls(Connection::new(addr, TlsStream::new(stream, ServerSession::new(config))))
     }
 
+    /// Tries reading requests, and sends responses to any requests with the given router. Returns true if the connection should be dropped.
     fn respond_to_requests(&mut self, router: &Router) -> bool {
         match self {
             ClientConnection::PlainText(conn) => respond_to_requests(conn, router),

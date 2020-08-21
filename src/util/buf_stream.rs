@@ -18,6 +18,10 @@ impl<T: Read + Write> BufStream<T> {
     pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
         BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
     }
+
+    pub fn inner_ref(&self) -> &T {
+        self.0.get_ref().0.get_ref()
+    }
 }
 
 impl<T: Read + Write> Read for BufStream<T> {
