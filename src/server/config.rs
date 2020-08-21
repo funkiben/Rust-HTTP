@@ -13,5 +13,6 @@ pub struct Config {
     pub connection_handler_threads: usize,
     /// Config for TLS encryption to enable HTTPS. If this is not set then normal HTTP will be used.
     pub tls_config: Option<Arc<ServerConfig>>,
+    /// The router used for handling requests.
     pub router: Router,
 }
