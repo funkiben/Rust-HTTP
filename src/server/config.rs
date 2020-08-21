@@ -1,5 +1,6 @@
 use rustls::ServerConfig;
 use crate::server::Router;
+use std::sync::Arc;
 
 /// The config for an HTTP server.
 pub struct Config {
@@ -9,6 +10,6 @@ pub struct Config {
     /// connection at a time.
     pub connection_handler_threads: usize,
     /// Config for TLS encryption to enable HTTPS. If this is not set then normal HTTP will be used.
-    pub tls_config: Option<ServerConfig>,
+    pub tls_config: Option<Arc<ServerConfig>>,
     pub router: Router
 }

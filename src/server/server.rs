@@ -20,52 +20,70 @@ use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc}
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
 
-const SERVER_TOKEN: Token = Token(0);
-
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
 /// Starts the HTTP server. This function will block and listen for new connections.
-pub fn start(mut config: Config) -> std::io::Result<()> {
-    let mut listener = TcpListener::bind(config.addr.parse().expect("Invalid socket address"))?;
-    let thread_pool = ThreadPool::new(config.connection_handler_threads);
-    let tls_config = config.tls_config.take().map(|cfg| Arc::new(cfg));
-
+pub fn start(config: Config) -> std::io::Result<()> {
     let config = Arc::new(config);
 
-    let mut poll = Poll::new()?;
-    poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
-    let mut next_token = SERVER_TOKEN.0 + 1;
+    let addr = config.addr.parse().expect("Invalid socket address");
 
+    let thread_pool = ThreadPool::new(config.connection_handler_threads);
+
+    listen(addr,
+           |socket, addr| {
+               Arc::new(Mutex::new(make_client_connection(&config, socket, addr)))
+           },
+           |connection| {
+               let connection = connection.clone();
+               let config = config.clone();
+               thread_pool.execute(move || handle_read_ready_connection(config, connection));
+           })
+}
+
+fn listen<T>(addr: SocketAddr, make_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
+    const SERVER_TOKEN: Token = Token(0);
+
+    let mut listener = TcpListener::bind(addr)?;
     let mut connections = HashMap::with_capacity(128);
+
+    let poll = Poll::new()?;
+    poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
+
+    let mut next_token = SERVER_TOKEN.0 + 1;
 
     poll_events(
         poll,
         |poll, event|
             match event.token() {
-                SERVER_TOKEN => listen_until_blocked(&listener, |(mut stream, addr)| {
-                    let token = Token(next_token);
-                    next_token += 1;
-                    poll.registry().register(&mut stream, token, Interest::READABLE)?;
+                SERVER_TOKEN => {
+                    listen_until_blocked(&listener, |(mut stream, addr)| {
+                        let token = Token(next_token);
+                        next_token += 1;
+                        poll.registry().register(&mut stream, token, Interest::READABLE)?;
 
-                    let connection = if let Some(ref cfg) = tls_config {
-                        ClientConnection::new_tls(addr, stream, cfg)
-                    } else {
-                        ClientConnection::new_plaintext(addr, stream)
-                    };
+                        connections.insert(token, make_connection(stream, addr));
 
-                    connections.insert(token, Arc::new(Mutex::new(connection)));
-
-                    Ok(())
-                }),
-                token if event.is_read_closed() => { connections.remove(&token); }
-                token =>
-                    if let Some(connection) = connections.get(&token).cloned() {
-                        let config = Arc::clone(&config);
-                        thread_pool.execute(move || handle_connection(config, connection));
-                    }
+                        Ok(())
+                    });
+                }
+                token if event.is_read_closed() => {
+                    connections.remove(&token);
+                }
+                token => {
+                    connections.get(&token).map(&on_readable_connection);
+                }
             },
     )
+}
+
+fn make_client_connection(config: &Arc<Config>, stream: TcpStream, addr: SocketAddr) -> ClientConnection {
+    if let Some(ref cfg) = config.tls_config {
+        ClientConnection::new_tls(addr, stream, cfg)
+    } else {
+        ClientConnection::new_plaintext(addr, stream)
+    }
 }
 
 fn poll_events(mut poll: Poll, mut on_event: impl FnMut(&mut Poll, &Event)) -> std::io::Result<()> {
@@ -94,7 +112,7 @@ fn listen_until_blocked(listener: &TcpListener, mut on_connection: impl FnMut((T
     }
 }
 
-fn handle_connection(config: Arc<Config>, connection: Arc<Mutex<ClientConnection>>) {
+fn handle_read_ready_connection(config: Arc<Config>, connection: Arc<Mutex<ClientConnection>>) {
     let mut connection = connection.lock().unwrap();
 
     if !connection.is_shutdown() {

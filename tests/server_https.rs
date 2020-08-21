@@ -16,6 +16,7 @@ use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::SendResponse;
 use util::curl;
 use util::test_server;
+use std::sync::Arc;
 
 mod util;
 
@@ -178,7 +179,7 @@ fn normal_http_message() {
     client.read_to_string(&mut response).unwrap();
 }
 
-fn get_tsl_config() -> ServerConfig {
+fn get_tsl_config() -> Arc<ServerConfig> {
     let mut config = ServerConfig::new(NoClientAuth::new());
 
     let certs = read_certs("./tests/certs/server.crt");
@@ -186,7 +187,7 @@ fn get_tsl_config() -> ServerConfig {
 
     config.set_single_cert(certs, privkey).unwrap();
 
-    config
+    Arc::new(config)
 }
 
 fn read_certs(filename: &str) -> Vec<Certificate> {
