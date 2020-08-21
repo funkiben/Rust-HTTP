@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use mio::{Events, Interest, Poll, Token};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
-use rustls::{ServerConfig, ServerSession, Session};
+use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
@@ -19,6 +19,7 @@ use crate::server::connection::ReadRequestResult::{Closed, NotReady, Ready};
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
+use crate::util::tls_stream::TlsStream;
 
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
@@ -32,9 +33,7 @@ pub fn start(config: Config) -> std::io::Result<()> {
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
 
     listen(addr,
-           |socket, addr| {
-               Arc::new(Mutex::new(make_client_connection(&config, socket, addr)))
-           },
+           |socket, addr| Arc::new(Mutex::new(Some(make_client_connection(&config, socket, addr)))),
            |connection| {
                let connection = connection.clone();
                let config = config.clone();
@@ -112,13 +111,13 @@ fn listen_until_blocked(listener: &TcpListener, mut on_connection: impl FnMut((T
     }
 }
 
-fn handle_read_ready_connection(config: Arc<Config>, connection: Arc<Mutex<ClientConnection>>) {
-    let mut connection = connection.lock().unwrap();
+fn handle_read_ready_connection(config: Arc<Config>, connection: Arc<Mutex<Option<ClientConnection>>>) {
+    let mut lock = connection.lock().unwrap();
 
-    if !connection.is_shutdown() {
+    if let Some(mut connection) = lock.take() {
         let should_close = connection.respond_to_requests(&config.router);
-        if should_close {
-            connection.shutdown().unwrap_or_default();
+        if !should_close {
+            lock.replace(connection);
         }
     }
 }
@@ -181,45 +180,23 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
 
 
 enum ClientConnection {
-    PlainText(bool, Connection<TcpStream>),
-    Tls(bool, Connection<rustls::StreamOwned<ServerSession, TcpStream>>),
+    PlainText(Connection<TcpStream>),
+    Tls(Connection<TlsStream<ServerSession, TcpStream>>),
 }
 
 impl ClientConnection {
     fn new_plaintext(addr: SocketAddr, stream: TcpStream) -> ClientConnection {
-        ClientConnection::PlainText(false, Connection::new(addr, stream))
+        ClientConnection::PlainText(Connection::new(addr, stream))
     }
 
     fn new_tls(addr: SocketAddr, stream: TcpStream, config: &Arc<ServerConfig>) -> ClientConnection {
-        ClientConnection::Tls(false, Connection::new(addr, rustls::StreamOwned::new(ServerSession::new(config), stream)))
+        ClientConnection::Tls(Connection::new(addr, TlsStream::new(stream, ServerSession::new(config))))
     }
 
     fn respond_to_requests(&mut self, router: &Router) -> bool {
         match self {
-            ClientConnection::PlainText(_, conn) => respond_to_requests(conn, router),
-            ClientConnection::Tls(_, conn) => respond_to_requests(conn, router),
-        }
-    }
-
-    fn is_shutdown(&self) -> bool {
-        match self {
-            ClientConnection::PlainText(shutdown, _) => *shutdown,
-            ClientConnection::Tls(shutdown, _) => *shutdown
-        }
-    }
-
-    fn shutdown(&mut self) -> std::io::Result<()> {
-        match self {
-            ClientConnection::PlainText(shutdown, conn) => {
-                *shutdown = true;
-                conn.stream_ref().shutdown(Shutdown::Both)
-            }
-            ClientConnection::Tls(shutdown, conn) => {
-                *shutdown = true;
-                conn.stream_mut().sess.send_close_notify();
-                conn.stream_mut().flush().unwrap_or_default();
-                conn.stream_ref().sock.shutdown(Shutdown::Both)
-            }
+            ClientConnection::PlainText(conn) => respond_to_requests(conn, router),
+            ClientConnection::Tls(conn) => respond_to_requests(conn, router),
         }
     }
 }

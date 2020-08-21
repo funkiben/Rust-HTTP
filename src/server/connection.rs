@@ -46,14 +46,6 @@ impl<S: Read + Write> Connection<S> {
             Err(res) => Err(res)
         }
     }
-
-    pub fn stream_ref(&self) -> &S {
-        self.stream.inner_ref()
-    }
-
-    pub fn stream_mut(&mut self) -> &mut S {
-        self.stream.inner_mut()
-    }
 }
 
 impl<S: Read + Write> Write for Connection<S> {

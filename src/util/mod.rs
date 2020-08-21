@@ -7,3 +7,6 @@ pub mod mock;
 
 /// A stream with buffers for reading and writing.
 pub mod buf_stream;
+
+/// Stream that automatically handles TLS.
+pub mod tls_stream;
