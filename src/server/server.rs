@@ -9,10 +9,9 @@ use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::parse::error::ParsingError;
 use crate::server::config::Config;
-use crate::server::connection::Connection;
-use crate::server::connection::ReadRequestResult::{BadData, Closed, NotReady, Ready};
+use crate::server::connection::{Connection, ReadRequestError};
+use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
 use crate::server::listen::listen;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
@@ -69,13 +68,11 @@ fn respond_to_requests<T: Read + Write>(connection: &mut Connection<T>, router: 
         match connection.read_request() {
             Ready(request) => {
                 let write_result = write_response_from_router(connection, router, &request);
-                if write_result.is_err() || should_close_after_response(&request) {
-                    return true;
-                }
+                if write_result.is_err() || should_close_after_response(&request) { return true; }
             }
             NotReady => return false,
             Closed => return true,
-            BadData(error) => {
+            Error(error) => {
                 write_error_response(connection, error).unwrap_or_default();
                 return true;
             }
@@ -93,7 +90,7 @@ fn write_response_from_router(writer: &mut impl Write, router: &Router, request:
 }
 
 /// Writes a response to the given request parsing error.
-fn write_error_response(writer: &mut impl Write, error: ParsingError) -> std::io::Result<()> {
+fn write_error_response(writer: &mut impl Write, error: ReadRequestError) -> std::io::Result<()> {
     println!("Error: {:?}", error);
     writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
     writer.flush()

@@ -5,7 +5,7 @@ use crate::parse::body::BodyParser;
 use crate::parse::headers::HeadersParser;
 use crate::parse::message::State::{Body, Finished, FirstLine, Headers};
 use crate::parse::parse::{Parse, ParseResult};
-use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::parse::ParseStatus::{Done, IoErr};
 
 /// Generic HTTP message parser, used by both response and request parsing.
 pub struct MessageParser<R, T> {
@@ -21,6 +21,15 @@ impl<R, T> MessageParser<R, T> {
         MessageParser {
             state: FirstLine(first_line_parser),
             read_body_if_no_content_length,
+        }
+    }
+
+    /// Gets the first line parser used by this message parser.
+    /// May return None if the first line parser is no longer in use.
+    pub fn first_line_parser(&self) -> Option<&R> {
+        match &self.state {
+            FirstLine(parser) => Some(parser),
+            _ => None
         }
     }
 }
@@ -51,7 +60,7 @@ impl<T, R: Parse<T>> Parse<(T, HeaderMap, Vec<u8>)> for MessageParser<R, T> {
 
             state = match result {
                 Done(state) => state,
-                Blocked(state) => return Ok(Blocked(Self { state, read_body_if_no_content_length }))
+                IoErr(state, err) => return Ok(IoErr(Self { state, read_body_if_no_content_length }, err))
             }
         }
     }
@@ -61,7 +70,7 @@ impl<T, R: Parse<T>> Parse<(T, HeaderMap, Vec<u8>)> for MessageParser<R, T> {
 fn first_line_state<T, R: Parse<T>>(reader: &mut impl BufRead, parser: R) -> ParseResult<State<R, T>, State<R, T>> {
     Ok(match parser.parse(reader)? {
         Done(first_line) => Done(Headers(first_line, HeadersParser::new())),
-        Blocked(parser) => Blocked(FirstLine(parser))
+        IoErr(parser, err) => IoErr(FirstLine(parser), err)
     })
 }
 
@@ -72,7 +81,7 @@ fn headers_state<T, R>(reader: &mut impl BufRead, first_line: T, parser: Headers
             let body_parser = BodyParser::new(&headers, read_body_if_no_content_length)?;
             Done(Body(first_line, headers, body_parser))
         }
-        Blocked(parser) => Blocked(Headers(first_line, parser))
+        IoErr(parser, err) => IoErr(Headers(first_line, parser), err)
     })
 }
 
@@ -80,7 +89,7 @@ fn headers_state<T, R>(reader: &mut impl BufRead, first_line: T, parser: Headers
 fn body_state<T, R>(reader: &mut impl BufRead, first_line: T, headers: HeaderMap, parser: BodyParser) -> ParseResult<State<R, T>, State<R, T>> {
     Ok(match parser.parse(reader)? {
         Done(body) => Done(Finished(first_line, headers, body)),
-        Blocked(parser) => Blocked(Body(first_line, headers, parser))
+        IoErr(parser, err) => IoErr(Body(first_line, headers, parser), err)
     })
 }
 
@@ -91,10 +100,11 @@ mod tests {
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
     use crate::parse::crlf_line::CrlfLineParser;
-    use crate::parse::error::ParsingError;
-    use crate::parse::error::ParsingError::{BadSyntax, InvalidChunkSize, InvalidHeaderValue, Reading};
+    use crate::parse::error::ParsingError::{BadSyntax, InvalidChunkSize, InvalidHeaderValue};
     use crate::parse::message::MessageParser;
     use crate::parse::test_util;
+    use crate::parse::test_util::TestParseResult;
+    use crate::parse::test_util::TestParseResult::{ParseErr, Value};
 
     type Message = (String, HeaderMap, Vec<u8>);
     type Parser = MessageParser<CrlfLineParser, String>;
@@ -103,11 +113,11 @@ mod tests {
         MessageParser::new(CrlfLineParser::new(), read_if_no_content_length)
     }
 
-    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: Result<Message, ParsingError>) {
+    fn test_with_eof(input: Vec<&str>, read_if_no_content_length: bool, expected: TestParseResult<Message>) {
         test_util::test_with_eof(get_message_deframer(read_if_no_content_length), input, expected);
     }
 
-    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: Result<Message, ParsingError>) {
+    fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: TestParseResult<Message>) {
         test_util::test_endless_strs(get_message_deframer(read_if_no_content_length), data, endless_data, expected);
     }
 
@@ -116,9 +126,9 @@ mod tests {
         test_with_eof(
             vec!["blah blah blah\r\n\r\n"],
             false,
-            Ok(("blah blah blah".to_string(),
-                Default::default(),
-                vec![])),
+            Value(("blah blah blah".to_string(),
+                   Default::default(),
+                   vec![])),
         );
     }
 
@@ -127,9 +137,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
-                "hello".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
+                   "hello".as_bytes().to_vec())),
         );
     }
 
@@ -138,9 +148,9 @@ mod tests {
         test_with_eof(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
-                "hello".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
+                   "hello".as_bytes().to_vec())),
         );
     }
 
@@ -149,9 +159,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
-                "hello".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
+                   "hello".as_bytes().to_vec())),
         );
     }
 
@@ -172,9 +182,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
-                body.to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
+                   body.to_vec())),
         );
     }
 
@@ -183,9 +193,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             true,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                Default::default(),
-                "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   Default::default(),
+                   "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec())),
         );
     }
 
@@ -194,9 +204,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                Default::default(),
-                vec![])),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   Default::default(),
+                   vec![])),
         );
     }
 
@@ -205,9 +215,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
-                vec![])),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
+                   vec![])),
         );
     }
 
@@ -216,7 +226,7 @@ mod tests {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
             false,
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -225,7 +235,7 @@ mod tests {
         test_with_eof(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -234,7 +244,7 @@ mod tests {
         test_with_eof(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -243,7 +253,7 @@ mod tests {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
             false,
-            Ok((
+            Value((
                 "ergejrogi jerogij eworfgjwoefjwof9wef wfw".to_string(),
                 Default::default(),
                 vec![]
@@ -256,7 +266,7 @@ mod tests {
         test_with_eof(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -265,7 +275,7 @@ mod tests {
         test_with_eof(
             vec!["\r\n\r\n\r\n\r\n"],
             false,
-            Ok(("".to_string(), Default::default(), vec![])),
+            Value(("".to_string(), Default::default(), vec![])),
         );
     }
 
@@ -274,7 +284,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK"],
             false,
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -283,7 +293,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -292,7 +302,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -301,7 +311,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
             false,
-            Err(InvalidHeaderValue),
+            ParseErr(InvalidHeaderValue),
         );
     }
 
@@ -310,7 +320,7 @@ mod tests {
         test_with_eof(
             vec![],
             false,
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -319,7 +329,7 @@ mod tests {
         test_with_eof(
             vec!["a"],
             false,
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -328,7 +338,7 @@ mod tests {
         test_with_eof(
             vec!["\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -337,7 +347,7 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -346,9 +356,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
-                "helloHT".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
+                   "helloHT".as_bytes().to_vec())),
         );
     }
 
@@ -357,9 +367,9 @@ mod tests {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
-                "hel".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
+                   "hel".as_bytes().to_vec())),
         );
     }
 
@@ -376,9 +386,9 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
-                "hello world hello".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                   "hello world hello".as_bytes().to_vec())),
         );
     }
 
@@ -393,7 +403,7 @@ mod tests {
                  "3\r\n",
                  "llo\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -410,7 +420,7 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -427,7 +437,7 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -444,9 +454,9 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
-                "he\r\nc\r\nllo world hello".as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                   "he\r\nc\r\nllo world hello".as_bytes().to_vec())),
         );
     }
 
@@ -463,7 +473,7 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -480,7 +490,7 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Err(InvalidChunkSize),
+            ParseErr(InvalidChunkSize),
         );
     }
 
@@ -490,7 +500,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n",
                  "zhelloiouf jwiufji ejif jef"],
             false,
-            Err(Error::from(ErrorKind::UnexpectedEof).into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -502,7 +512,7 @@ mod tests {
                  "9\r\n",
                  "\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -518,7 +528,7 @@ mod tests {
                  "llo\r\n",
                  "0\r\n"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -529,7 +539,7 @@ mod tests {
                  "2\r\n",
                  "he"],
             false,
-            Err(Reading(Error::from(ErrorKind::UnexpectedEof))),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -540,9 +550,9 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
-                vec![])),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                   vec![])),
         );
     }
 
@@ -599,9 +609,9 @@ mod tests {
                  "0\r\n",
                  "\r\n"],
             false,
-            Ok(("HTTP/1.1 200 OK".to_string(),
-                HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
-                chunk.as_bytes().to_vec())),
+            Value(("HTTP/1.1 200 OK".to_string(),
+                   HeaderMap::from_pairs(vec![(TRANSFER_ENCODING, "chunked".to_string())]),
+                   chunk.as_bytes().to_vec())),
         );
     }
 
@@ -619,7 +629,7 @@ mod tests {
             9fj asodijv osdivj osidvja psijf pasidjf pas\r\n\
             content-length: 5\r\n\r\nhello"],
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
     }
 
@@ -637,7 +647,7 @@ mod tests {
             3JFHVL AIJFHVL AILIHiuh waiufh iefuhapergiu hapergiu hapeirug haeriug hsperg ",
                  "\r\n\r\n"],
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
     }
 
@@ -647,7 +657,7 @@ mod tests {
             vec![],
             "blah",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         )
     }
 
@@ -657,49 +667,49 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blah\r\n",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahh\r\n",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "random: blahhhh\r\n",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: a\r\n",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             "a: ",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
 
         test_endless(
             vec!["HTTP/1.1 200 OK\r\n"],
             ": ",
             false,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         );
     }
 
@@ -709,7 +719,7 @@ mod tests {
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
             "blah blah blah",
             true,
-            Err(Reading(Error::new(ErrorKind::Other, "read limit reached"))),
+            Error::new(ErrorKind::Other, "read limit reached").into(),
         )
     }
 }

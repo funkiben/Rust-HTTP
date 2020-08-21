@@ -1,16 +1,17 @@
-use std::io::{BufRead, Error, ErrorKind};
+use std::io::BufRead;
 
 use crate::parse::deframe::deframe::Deframe;
 use crate::parse::error::ParsingError;
-use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::parse::ParseStatus::{Done, IoErr};
 
 /// The result of a parse call. Contains either an error, the new parser state, or the fully parsed value.
 pub type ParseResult<T, R> = Result<ParseStatus<T, R>, ParsingError>;
 
-/// Trait for parsing statefully. Reads as much data from the given reader as possible, and either
-/// returns an error or the status of the parser. The status of the parser will either be the updated
-/// parser state if a value can't be construct yet, or the fully parsed value.
+/// Trait for parsing statefully.
 pub trait Parse<T>: Sized {
+    /// Reads data from the reader until either a value can be parsed, an IO error is encountered, or a parsing error is encountered.
+    /// The parser is consumed if either a parsing error occurs or a value is successfully parsed.
+    /// Otherwise the parser is returned back along with the IO error that stopped it from parsing.
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<T, Self>;
 }
 
@@ -18,15 +19,15 @@ pub trait Parse<T>: Sized {
 pub enum ParseStatus<T, R> {
     /// The parser has fully constructed a value.
     Done(T),
-    /// The new state of the parser.
-    Blocked(R),
+    /// The new state of the parser and the IO error that was encountered.
+    IoErr(R, std::io::Error),
 }
 
 impl<T, R> ParseStatus<T, R> {
     pub fn map_blocked<V>(self, mapper: impl Fn(R) -> V) -> ParseStatus<T, V> {
         match self {
             Done(val) => Done(val),
-            Blocked(new) => Blocked(mapper(new))
+            IoErr(new, err) => IoErr(mapper(new), err)
         }
     }
 }
@@ -34,14 +35,8 @@ impl<T, R> ParseStatus<T, R> {
 impl<D: Deframe<T>, T> Parse<T> for D {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<T, Self> {
         match self.read(reader) {
-            Err((reader, err)) if can_continue_after_error(&err) => Ok(Blocked(reader)),
-            Err((_, err)) => Err(err.into()),
+            Err((reader, err)) => Ok(IoErr(reader, err)),
             Ok(value) => Ok(Done(value))
         }
     }
-}
-
-/// Checks if the IO error is fatal or not.
-fn can_continue_after_error(err: &Error) -> bool {
-    err.kind() == ErrorKind::WouldBlock
 }

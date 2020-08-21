@@ -4,12 +4,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::client::config::Config;
+use crate::client::RequestError::{Reading, Sending};
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::parse::error::ParsingError;
 use crate::parse::parse::Parse;
-use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::parse::ParseStatus::{Done, IoErr};
 use crate::parse::response::ResponseParser;
 
 /// Client for making HTTP requests.
@@ -25,6 +26,8 @@ pub struct Client {
 pub enum RequestError {
     /// Error with parsing the response received from the server.
     ResponseParsing(ParsingError),
+    /// Error reading responses from server.
+    Reading(Error),
     /// Error sending the request to the server.
     Sending(Error),
 }
@@ -32,12 +35,6 @@ pub enum RequestError {
 impl From<ParsingError> for RequestError {
     fn from(err: ParsingError) -> Self {
         RequestError::ResponseParsing(err)
-    }
-}
-
-impl From<Error> for RequestError {
-    fn from(err: Error) -> Self {
-        RequestError::Sending(err)
     }
 }
 
@@ -89,30 +86,30 @@ impl Connection {
     /// If the connection is not yet open, then a new connection will be opened.
     /// If the request cannot be written, then a new connection is opened and the request is retried once more.
     fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
-        self.try_write(request)?;
+        self.try_write(request).map_err(|err| Sending(err))?;
 
         let response_parser = ResponseParser::new();
         match response_parser.parse(self.reader.as_mut().unwrap())? {
             Done(response) => Ok(response),
-            Blocked(_) => panic!("this will never be reached because the reader is blocking")
+            IoErr(_, err) => Err(Reading(err))
         }
     }
 
     /// Tries to write the request to the server.
     /// If an existing connection is open, then that connection will be written to, otherwise a new connection is opened.
     /// If the existing connection cannot be written to, then a new connection is opened.
-    fn try_write(&mut self, request: &Request) -> Result<(), RequestError> {
+    fn try_write(&mut self, request: &Request) -> Result<(), Error> {
         self.ensure_connected()?;
         if let Ok(_) = write_request(self.writer.as_mut().unwrap(), request) {
             Ok(())
         } else {
             self.connect()?;
-            write_request(self.writer.as_mut().unwrap(), request).map_err(Error::into)
+            write_request(self.writer.as_mut().unwrap(), request)
         }
     }
 
     /// Connects to the server if not already connected.
-    fn ensure_connected(&mut self) -> Result<(), RequestError> {
+    fn ensure_connected(&mut self) -> Result<(), Error> {
         if let None = self.reader {
             self.connect()?
         }
@@ -120,7 +117,7 @@ impl Connection {
     }
 
     /// Opens a new connection to the server.
-    fn connect(&mut self) -> Result<(), RequestError> {
+    fn connect(&mut self) -> Result<(), Error> {
         let stream = TcpStream::connect(self.addr)?;
         let stream_clone = stream.try_clone()?;
         stream.set_read_timeout(Some(self.read_timeout)).unwrap();

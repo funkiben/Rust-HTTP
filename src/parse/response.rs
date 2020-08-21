@@ -7,7 +7,7 @@ use crate::parse::crlf_line::CrlfLineParser;
 use crate::parse::error::ParsingError;
 use crate::parse::message::MessageParser;
 use crate::parse::parse::{Parse, ParseResult};
-use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::parse::ParseStatus::{Done, IoErr};
 
 /// Parser for responses.
 pub struct ResponseParser(MessageParser<FirstLineParser, Status>);
@@ -23,7 +23,7 @@ impl Parse<Response> for ResponseParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<Response, Self> {
         Ok(match self.0.parse(reader)? {
             Done((status, headers, body)) => Done(Response { status, headers, body }),
-            Blocked(parser) => Blocked(Self(parser))
+            IoErr(parser, err) => IoErr(Self(parser), err)
         })
     }
 }
@@ -42,7 +42,7 @@ impl Parse<Status> for FirstLineParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<Status, Self> {
         Ok(match self.0.parse(reader)? {
             Done(line) => Done(parse_first_line(line)?),
-            Blocked(parser) => Blocked(Self(parser))
+            IoErr(parser, err) => IoErr(Self(parser), err)
         })
     }
 }
@@ -74,12 +74,13 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::parse::error::ParsingError;
     use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, InvalidStatusCode, WrongHttpVersion};
     use crate::parse::response::ResponseParser;
     use crate::parse::test_util;
+    use crate::parse::test_util::TestParseResult;
+    use crate::parse::test_util::TestParseResult::{ParseErr, Value};
 
-    fn test_with_eof(data: Vec<&str>, expected: Result<Response, ParsingError>) {
+    fn test_with_eof(data: Vec<&str>, expected: TestParseResult<Response>) {
         test_util::test_with_eof(ResponseParser::new(), data, expected);
     }
 
@@ -87,7 +88,7 @@ mod tests {
     fn no_headers_or_body() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: Default::default(),
                 body: vec![],
@@ -99,7 +100,7 @@ mod tests {
     fn headers_and_body() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
@@ -111,7 +112,7 @@ mod tests {
     fn headers_and_body_fragmented() {
         test_with_eof(
             vec!["HTT", "P/1.", "1 200 OK", "\r", "\nconte", "nt-length", ":", " 5\r\n\r\nh", "el", "lo"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
@@ -123,7 +124,7 @@ mod tests {
     fn only_one_response_read() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "5".to_string())]),
                 body: "hello".as_bytes().to_vec(),
@@ -147,7 +148,7 @@ mod tests {
         P{P[p[p[][][][]{}{}][][%%%\n\n\n\n\n\n wefwfw e2123456768960798676reresdsxfbcgrtg eg erg   ";
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 1054\r\n\r\n", &String::from_utf8_lossy(body)],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "1054".to_string())]),
                 body: body.to_vec(),
@@ -159,7 +160,7 @@ mod tests {
     fn no_content_length() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: Default::default(),
                 body: "helloHTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".as_bytes().to_vec(),
@@ -171,7 +172,7 @@ mod tests {
     fn custom_header() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncustom-header: custom header value\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(Header::Custom("custom-header".to_string()), "custom header value".to_string())]),
                 body: vec![],
@@ -183,7 +184,7 @@ mod tests {
     fn not_found_404_response() {
         test_with_eof(
             vec!["HTTP/1.1 404 Not Found\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::NOT_FOUND,
                 headers: Default::default(),
                 body: vec![],
@@ -195,7 +196,7 @@ mod tests {
     fn no_status_reason() {
         test_with_eof(
             vec!["HTTP/1.1 400\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::BAD_REQUEST,
                 headers: Default::default(),
                 body: vec![],
@@ -207,7 +208,7 @@ mod tests {
     fn invalid_status_code() {
         test_with_eof(
             vec!["HTTP/1.1 300000 Not Found\r\n\r\n"],
-            Err(InvalidStatusCode),
+            ParseErr(InvalidStatusCode),
         );
     }
 
@@ -215,7 +216,7 @@ mod tests {
     fn negative_status_code() {
         test_with_eof(
             vec!["HTTP/1.1 -30 Not Found\r\n\r\n"],
-            Err(InvalidStatusCode),
+            ParseErr(InvalidStatusCode),
         );
     }
 
@@ -223,7 +224,7 @@ mod tests {
     fn gibberish_response() {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw"],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -231,7 +232,7 @@ mod tests {
     fn gibberish_with_newline() {
         test_with_eof(
             vec!["ergejrogi jerogij ewo\nrfgjwoefjwof9wef wfw"],
-            Err(BadSyntax.into()),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -239,7 +240,7 @@ mod tests {
     fn gibberish_with_crlf() {
         test_with_eof(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
-            Err(WrongHttpVersion.into()),
+            ParseErr(WrongHttpVersion),
         );
     }
 
@@ -247,7 +248,7 @@ mod tests {
     fn gibberish_with_crlfs_at_end() {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
-            Err(WrongHttpVersion.into()),
+            ParseErr(WrongHttpVersion),
         );
     }
 
@@ -255,7 +256,7 @@ mod tests {
     fn all_newlines() {
         test_with_eof(
             vec!["\n\n\n\n\n\n\n\n\n\n\n"],
-            Err(BadSyntax.into()),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -263,7 +264,7 @@ mod tests {
     fn all_crlfs() {
         test_with_eof(
             vec!["\r\n\r\n\r\n\r\n"],
-            Err(BadSyntax.into()),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -271,7 +272,7 @@ mod tests {
     fn wrong_http_version() {
         test_with_eof(
             vec!["HTTP/2.0 404 Not Found\r\n\r\n"],
-            Err(WrongHttpVersion.into()),
+            ParseErr(WrongHttpVersion),
         );
     }
 
@@ -279,7 +280,7 @@ mod tests {
     fn no_status_code() {
         test_with_eof(
             vec!["HTTP/1.1\r\n\r\n"],
-            Err(BadSyntax.into()),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -287,7 +288,7 @@ mod tests {
     fn missing_crlfs() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK"],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -295,7 +296,7 @@ mod tests {
     fn only_one_crlf() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\n"],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -303,7 +304,7 @@ mod tests {
     fn bad_header() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\nbad header\r\n\r\n"],
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -311,7 +312,7 @@ mod tests {
     fn bad_content_length_value() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: five\r\n\r\nhello"],
-            Err(InvalidHeaderValue),
+            ParseErr(InvalidHeaderValue),
         );
     }
 
@@ -319,7 +320,7 @@ mod tests {
     fn no_data() {
         test_with_eof(
             vec![],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -327,7 +328,7 @@ mod tests {
     fn one_character() {
         test_with_eof(
             vec!["a"],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -335,7 +336,7 @@ mod tests {
     fn one_crlf_nothing_else() {
         test_with_eof(
             vec!["\r\n"],
-            Err(BadSyntax),
+            ParseErr(BadSyntax),
         );
     }
 
@@ -343,7 +344,7 @@ mod tests {
     fn content_length_too_long() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello"],
-            Err(ErrorKind::UnexpectedEof.into()),
+            ErrorKind::UnexpectedEof.into(),
         );
     }
 
@@ -351,7 +352,7 @@ mod tests {
     fn content_length_too_long_with_request_after() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nhello", "HTTP/1.1 200 OK\r\n\r\n"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "7".to_string())]),
                 body: "helloHT".as_bytes().to_vec(),
@@ -363,7 +364,7 @@ mod tests {
     fn content_length_too_short() {
         test_with_eof(
             vec!["HTTP/1.1 200 OK\r\ncontent-length: 3\r\n\r\nhello"],
-            Ok(Response {
+            Value(Response {
                 status: status::OK,
                 headers: HeaderMap::from_pairs(vec![(CONTENT_LENGTH, "3".to_string())]),
                 body: "hel".as_bytes().to_vec(),

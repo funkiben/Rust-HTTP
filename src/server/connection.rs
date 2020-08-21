@@ -1,11 +1,12 @@
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::SocketAddr;
 
 use crate::common::request::Request;
 use crate::parse::error::ParsingError;
 use crate::parse::parse::{Parse, ParseStatus};
 use crate::parse::request::RequestParser;
-use crate::server::connection::ReadRequestResult::{BadData, Closed, NotReady, Ready};
+use crate::server::connection::ReadRequestError::{IoErr, ParseErr};
+use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
 use crate::util::buf_stream::BufStream;
 
 const WRITE_BUF_SIZE: usize = 1024;
@@ -18,9 +19,18 @@ pub enum ReadRequestResult {
     /// A new request has been parsed.
     Ready(Request),
     /// An error occurred while trying to read a request.
-    BadData(ParsingError),
+    Error(ReadRequestError),
     /// The connection was closed.
     Closed,
+}
+
+/// An error that may result from trying to read a request.
+#[derive(Debug)]
+pub enum ReadRequestError {
+    /// An error in parsing the request.
+    ParseErr(ParsingError),
+    /// An unhandled IO error.
+    IoErr(std::io::Error),
 }
 
 /// A connection to a client. The main purpose of this is to store the state of request parsing for asynchronous IO.
@@ -47,13 +57,13 @@ impl<S: Read + Write> Connection<S> {
 
         match parser.parse(&mut self.stream) {
             Ok(ParseStatus::Done(request)) => Ready(request),
-            Ok(ParseStatus::Blocked(parser)) => {
+            Ok(ParseStatus::IoErr(parser, err)) if err.kind() == ErrorKind::WouldBlock => {
                 self.parser = Some(parser);
                 NotReady
             }
-            Err(ParsingError::Eof) => Closed,
-            Err(ParsingError::Reading(ref error)) if is_closed(error) => Closed,
-            Err(res) => BadData(res)
+            Ok(ParseStatus::IoErr(parser, err)) if is_closed(&parser, &err) => Closed,
+            Ok(ParseStatus::IoErr(_, err)) => Error(IoErr(err)),
+            Err(res) => Error(ParseErr(res))
         }
     }
 
@@ -73,8 +83,10 @@ impl<S: Read + Write> Write for Connection<S> {
     }
 }
 
-/// Checks if the given IO error indicates whether the connection has closed.
-fn is_closed(error: &Error) -> bool {
-    // ConnectionAborted is caused from https streams that have closed
-    error.kind() == ErrorKind::ConnectionAborted
+/// Checks if the given IO error and parser states indicates the connection has closed.
+fn is_closed(parser: &RequestParser, error: &std::io::Error) -> bool {
+    // If an unexpected EOF was encountered by no data was read then the connection is assumed to be closed.
+    (error.kind() == ErrorKind::UnexpectedEof && !parser.has_data())
+        // ConnectionAborted is caused from https streams that have closed
+        || error.kind() == ErrorKind::ConnectionAborted
 }

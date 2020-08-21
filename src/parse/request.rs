@@ -3,14 +3,13 @@ use std::io::BufRead;
 use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
-use crate::parse::crlf_line::CrlfLineOrEofParser;
+use crate::parse::crlf_line::CrlfLineParser;
 use crate::parse::error::ParsingError;
 use crate::parse::message::MessageParser;
 use crate::parse::parse::{Parse, ParseResult};
-use crate::parse::parse::ParseStatus::{Blocked, Done};
+use crate::parse::parse::ParseStatus::{Done, IoErr};
 
 /// Parser for requests.
-/// NOTE: Returns an Eof error instead of UnexpectedEof error if EOF is found before any data can be read.
 pub struct RequestParser(MessageParser<FirstLineParser, (Method, String)>);
 
 impl RequestParser {
@@ -18,33 +17,37 @@ impl RequestParser {
     pub fn new() -> RequestParser {
         RequestParser(MessageParser::new(FirstLineParser::new(), false))
     }
+
+    /// Returns true if this parser has read any data so far.
+    pub fn has_data(&self) -> bool {
+        self.0.first_line_parser().map(|p| { p.0.read_so_far() > 0 }).unwrap_or(true)
+    }
 }
 
 impl Parse<Request> for RequestParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<Request, Self> {
         Ok(match self.0.parse(reader)? {
             Done(((method, uri), headers, body)) => Done(Request { method, uri, headers, body }),
-            Blocked(parser) => Blocked(Self(parser))
+            IoErr(parser, err) => IoErr(Self(parser), err)
         })
     }
 }
 
 /// The parser for the first line of a request.
-struct FirstLineParser(CrlfLineOrEofParser);
+struct FirstLineParser(CrlfLineParser);
 
 impl FirstLineParser {
     /// Creates a new parser for a requests first line.
     fn new() -> FirstLineParser {
-        FirstLineParser(CrlfLineOrEofParser::new())
+        FirstLineParser(CrlfLineParser::new())
     }
 }
 
 impl Parse<(Method, String)> for FirstLineParser {
     fn parse(self, reader: &mut impl BufRead) -> ParseResult<(Method, String), Self> {
         Ok(match self.0.parse(reader)? {
-            Done(None) => Err(ParsingError::Eof)?,
-            Done(Some(line)) => Done(parse_first_line(line)?),
-            Blocked(parser) => Blocked(Self(parser))
+            Done(line) => Done(parse_first_line(line)?),
+            IoErr(parser, err) => IoErr(Self(parser), err)
         })
     }
 }
@@ -77,25 +80,26 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
-    use crate::parse::error::ParsingError;
-    use crate::parse::error::ParsingError::{BadSyntax, Eof, InvalidHeaderValue, UnrecognizedMethod, WrongHttpVersion};
+    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, UnrecognizedMethod, WrongHttpVersion};
     use crate::parse::request::RequestParser;
     use crate::parse::test_util;
+    use crate::parse::test_util::TestParseResult;
+    use crate::parse::test_util::TestParseResult::{ParseErr, Value};
 
-    fn test_with_eof(data: Vec<&str>, expected: Result<Request, ParsingError>) {
+    fn test_with_eof(data: Vec<&str>, expected: TestParseResult<Request>) {
         test_util::test_with_eof(RequestParser::new(), data, expected);
     }
 
     #[test]
     fn no_data() {
-        test_with_eof(vec![], Err(Eof.into()));
+        test_with_eof(vec![], ErrorKind::UnexpectedEof.into());
     }
 
     #[test]
     fn no_header_or_body() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -107,7 +111,7 @@ mod tests {
     fn no_header_or_body_fragmented() {
         test_with_eof(
             vec!["G", "ET / ", "HTTP/1", ".1\r\n", "\r", "\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -119,7 +123,7 @@ mod tests {
     fn interesting_uri() {
         test_with_eof(
             vec!["GET /hello/world/ HTTP/1.1\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/hello/world/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -131,7 +135,7 @@ mod tests {
     fn weird_uri() {
         test_with_eof(
             vec!["GET !#%$#/-+=_$+[]{}\\%&$ HTTP/1.1\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("!#%$#/-+=_$+[]{}\\%&$"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -143,7 +147,7 @@ mod tests {
     fn many_spaces_in_first_line() {
         test_with_eof(
             vec!["GET /hello/world/ HTTP/1.1 hello there blah blah\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/hello/world/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -155,7 +159,7 @@ mod tests {
     fn only_reads_one_request() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -167,7 +171,7 @@ mod tests {
     fn headers() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\nconnection: close\r\nsomething: hello there goodbye\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -183,7 +187,7 @@ mod tests {
     fn repeated_headers() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\ncontent-length: 0\r\nsomething: value 1\r\nsomething: value 2\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -200,7 +204,7 @@ mod tests {
     fn headers_weird_case() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncoNtEnt-lEngtH: 0\r\nCoNNECTION: close\r\nsoMetHing: hello there goodbye\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -216,7 +220,7 @@ mod tests {
     fn headers_only_colon_and_space() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\n: \r\n: \r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -231,7 +235,7 @@ mod tests {
     fn body_with_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -245,7 +249,7 @@ mod tests {
     fn body_fragmented() {
         test_with_eof(
             vec!["GE", "T / ", "HTT", "P/1.", "1\r", "\nconte", "nt-le", "n", "gth: ", "5\r\n\r", "\nhe", "ll", "o"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -262,7 +266,7 @@ mod tests {
                 "GET /body1 HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello",
                 "GET /body2 HTTP/1.1\r\ncontent-length: 7\r\n\r\ngoodbye"
             ],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/body1"),
                 method: Method::GET,
                 headers: header_map![
@@ -291,7 +295,7 @@ mod tests {
          W0EFJ 0WEFJ -WIJF-024JG0F34IGJ03 4I JG03W4IJG02HG0IQJGW-EIGJWPIEJGWeuf";
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 1131\r\n\r\n", &String::from_utf8_lossy(body)],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -305,7 +309,7 @@ mod tests {
     fn header_multiple_colons() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: value: foo\r\n\r\n"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![
@@ -319,98 +323,98 @@ mod tests {
     fn gibberish() {
         test_with_eof(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn no_requests_read_after_bad_request() {
         test_with_eof(
             vec!["regw", "\nergrg\n", "ie\n\n\nwof\r\n\r\n", "POST / HTTP/1.1\r\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn lots_of_newlines() {
         test_with_eof(
             vec!["\n\n\n\n\n", "\n\n\n", "\n\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn no_newlines() {
         test_with_eof(
             vec!["wuirghuiwuhfwf", "iouwejf", "ioerjgiowjergiuhwelriugh"],
-            Err(ErrorKind::UnexpectedEof.into()))
+            ErrorKind::UnexpectedEof.into())
     }
 
     #[test]
     fn invalid_method() {
         test_with_eof(
             vec!["yadadada / HTTP/1.1\r\n\r\n"],
-            Err(UnrecognizedMethod))
+            ParseErr(UnrecognizedMethod))
     }
 
     #[test]
     fn wrong_http_version() {
         test_with_eof(
             vec!["GET / HTTP/1.0\r\n\r\n"],
-            Err(WrongHttpVersion.into()))
+            ParseErr(WrongHttpVersion))
     }
 
     #[test]
     fn missing_uri_and_version() {
         test_with_eof(
             vec!["GET\r\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn missing_http_version() {
         test_with_eof(
             vec!["GET /\r\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn bad_crlf() {
         test_with_eof(
             vec!["GET / HTTP/1.1\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn bad_header() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\nyadadada\r\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn header_with_newline() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\niwjfw\r\n\r\n"],
-            Err(BadSyntax.into()))
+            ParseErr(BadSyntax))
     }
 
     #[test]
     fn missing_crlf_after_last_header() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\nhello: wgwf\r\n"],
-            Err(ErrorKind::UnexpectedEof.into()))
+            ErrorKind::UnexpectedEof.into())
     }
 
     #[test]
     fn missing_crlfs() {
         test_with_eof(
             vec!["GET / HTTP/1.1"],
-            Err(ErrorKind::UnexpectedEof.into()))
+            ErrorKind::UnexpectedEof.into())
     }
 
     #[test]
     fn body_no_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\n\r\nhello"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: HeaderMap::new(),
@@ -422,7 +426,7 @@ mod tests {
     fn body_too_short_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 3\r\n\r\nhello"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "3")],
@@ -434,7 +438,7 @@ mod tests {
     fn body_content_length_too_long() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
-            Err(ErrorKind::UnexpectedEof.into()))
+            ErrorKind::UnexpectedEof.into())
     }
 
     #[test]
@@ -442,7 +446,7 @@ mod tests {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello",
                  "GET / HTTP/1.1\r\ncontent-length: 10\r\n\r\nhello"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "10")],
@@ -454,14 +458,14 @@ mod tests {
     fn negative_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: -5\r\n\r\nhello"],
-            Err(InvalidHeaderValue));
+            ParseErr(InvalidHeaderValue));
     }
 
     #[test]
     fn request_with_0_content_length() {
         test_with_eof(
             vec!["GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\nhello"],
-            Ok(Request {
+            Value(Request {
                 uri: String::from("/"),
                 method: Method::GET,
                 headers: header_map![(CONTENT_LENGTH, "0")],
