@@ -15,7 +15,7 @@ const CONNECTION_CAPACITY: usize = 128;
 /// Listens asynchronously on the given address. Calls make_connection for each new stream, and
 /// calls on_readable_connection for each stream that is read ready.
 /// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
-pub fn listen<T>(addr: SocketAddr, make_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
+pub fn listen<T>(addr: SocketAddr, on_new_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
     const SERVER_TOKEN: Token = Token(0);
 
     let mut listener = TcpListener::bind(addr)?;
@@ -36,7 +36,7 @@ pub fn listen<T>(addr: SocketAddr, make_connection: impl Fn(TcpStream, SocketAdd
                         next_token += 1;
                         poll.registry().register(&mut stream, token, Interest::READABLE)?;
 
-                        connections.insert(token, make_connection(stream, addr));
+                        connections.insert(token, on_new_connection(stream, addr));
 
                         Ok(())
                     });

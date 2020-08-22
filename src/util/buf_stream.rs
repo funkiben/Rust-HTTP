@@ -1,5 +1,19 @@
 use std::io::{BufRead, BufReader, BufWriter, Read, Result, Write};
 
+/// A buffered stream. Stores buffers for writing and reading.
+pub struct BufStream<T: Write>(BufWriter<WriteableBufReader<T>>);
+
+impl<T: Read + Write> BufStream<T> {
+    /// Creates a new buffered stream with the given capacities for its buffers.
+    pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
+        BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
+    }
+
+    pub fn inner_ref(&self) -> &T {
+        self.0.get_ref().0.get_ref()
+    }
+}
+
 struct WriteableBufReader<T>(BufReader<T>);
 
 impl<T: Write> Write for WriteableBufReader<T> {
@@ -9,18 +23,6 @@ impl<T: Write> Write for WriteableBufReader<T> {
 
     fn flush(&mut self) -> Result<()> {
         self.0.get_mut().flush()
-    }
-}
-
-pub struct BufStream<T: Write>(BufWriter<WriteableBufReader<T>>);
-
-impl<T: Read + Write> BufStream<T> {
-    pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
-        BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
-    }
-
-    pub fn inner_ref(&self) -> &T {
-        self.0.get_ref().0.get_ref()
     }
 }
 

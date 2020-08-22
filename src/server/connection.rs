@@ -1,4 +1,4 @@
-use std::io::{ErrorKind, Read, Write};
+use std::io::{BufRead, ErrorKind,  Write};
 use std::net::SocketAddr;
 
 use crate::common::request::Request;
@@ -7,10 +7,6 @@ use crate::parse::parse::{Parse, ParseStatus};
 use crate::parse::request::RequestParser;
 use crate::server::connection::ReadRequestError::{IoErr, ParseErr};
 use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
-use crate::util::buf_stream::BufStream;
-
-const WRITE_BUF_SIZE: usize = 1024;
-const READ_BUF_SIZE: usize = 4096;
 
 /// The result of attempting to read a request.
 pub enum ReadRequestResult {
@@ -34,19 +30,19 @@ pub enum ReadRequestError {
 }
 
 /// A connection to a client. The main purpose of this is to store the state of request parsing for asynchronous IO.
-pub struct Connection<S: Read + Write> {
+pub struct Connection<S: BufRead + Write> {
     /// The address of the client.
     pub addr: SocketAddr,
-    stream: BufStream<S>,
+    stream: S,
     parser: Option<RequestParser>,
 }
 
-impl<S: Read + Write> Connection<S> {
+impl<S: BufRead + Write> Connection<S> {
     /// Creates a new connection out of the given address and stream.
     pub fn new(addr: SocketAddr, stream: S) -> Connection<S> {
         Connection {
             addr,
-            stream: BufStream::with_capacities(stream, READ_BUF_SIZE, WRITE_BUF_SIZE),
+            stream,
             parser: Some(RequestParser::new()),
         }
     }
@@ -69,11 +65,11 @@ impl<S: Read + Write> Connection<S> {
 
     /// Gets a reference to the underlying stream.
     pub fn stream_ref(&self) -> &S {
-        &self.stream.inner_ref()
+        &self.stream
     }
 }
 
-impl<S: Read + Write> Write for Connection<S> {
+impl<S: BufRead + Write> Write for Connection<S> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.stream.write(buf)
     }
