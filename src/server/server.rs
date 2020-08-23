@@ -24,8 +24,10 @@ const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n
 /// Raw bytes for a 404 not found response.
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
+/// Size of connection read buffers.
 const READ_BUF_SIZE: usize = 4096;
-const WRITE_BUF_SIZE: usize = 1024;
+/// Size of connection write buffers.
+const WRITE_BUF_SIZE: usize = 2048;
 
 /// Starts the HTTP server. This function will block and listen for new connections.
 pub fn start(config: Config) -> std::io::Result<()> {
@@ -39,6 +41,7 @@ pub fn start(config: Config) -> std::io::Result<()> {
 }
 
 /// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
+/// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
 fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
     let addr = config.addr.parse().expect("Invalid socket address");
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
