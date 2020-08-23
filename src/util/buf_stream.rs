@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufReader, BufWriter, Read, Result, Write};
 
 /// A buffered stream. Stores buffers for writing and reading.
+/// Uses BufWriter and BufReader for buffer implementations.
 pub struct BufStream<T: Write>(BufWriter<WriteableBufReader<T>>);
 
 impl<T: Read + Write> BufStream<T> {
@@ -9,6 +10,12 @@ impl<T: Read + Write> BufStream<T> {
         BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
     }
 
+    /// Creates a new buffered stream with the default buffer sizes.
+    pub fn new(inner: T) -> BufStream<T> {
+        BufStream(BufWriter::new(WriteableBufReader(BufReader::new(inner))))
+    }
+
+    /// Gets a reference to the inner stream.
     pub fn inner_ref(&self) -> &T {
         self.0.get_ref().0.get_ref()
     }
@@ -49,5 +56,44 @@ impl<T: Read + Write> BufRead for BufStream<T> {
 
     fn consume(&mut self, amt: usize) {
         self.0.get_mut().0.consume(amt)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::{Write, BufRead};
+
+    use crate::util::buf_stream::BufStream;
+    use crate::util::mock::{MockReader, MockStream, MockWriter};
+
+    #[test]
+    fn test_buf_read_and_write() -> std::io::Result<()> {
+        let reader = MockReader::from_strs(vec!["hello", "\nworld", "!"]);
+        let writer = MockWriter::new();
+        let mut stream = BufStream::new(MockStream::new(reader, writer));
+
+        let mut buf = String::new();
+        stream.read_line(&mut buf)?;
+        assert_eq!("hello\n", buf);
+
+        buf.clear();
+        stream.read_line(&mut buf)?;
+        assert_eq!("world!", buf);
+
+        buf.clear();
+        stream.read_line(&mut buf)?;
+        assert_eq!("", buf);
+
+        stream.write(b"hello")?;
+        stream.write(b" ")?;
+        stream.write(b"goodbye")?;
+
+        assert!(stream.inner_ref().writer.written.is_empty());
+
+        stream.flush()?;
+
+        assert_eq!(stream.inner_ref().writer.flushed, vec![b"hello goodbye".to_vec()]);
+
+        Ok(())
     }
 }
