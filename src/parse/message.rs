@@ -105,6 +105,7 @@ mod tests {
     use crate::parse::test_util;
     use crate::parse::test_util::TestParseResult;
     use crate::parse::test_util::TestParseResult::{ParseErr, Value};
+    use crate::header_map;
 
     type Message = (String, HeaderMap, Vec<u8>);
     type Parser = MessageParser<CrlfLineParser, String>;
@@ -119,6 +120,10 @@ mod tests {
 
     fn test_endless(data: Vec<&str>, endless_data: &str, read_if_no_content_length: bool, expected: TestParseResult<Message>) {
         test_util::test_endless_strs(get_message_deframer(read_if_no_content_length), data, endless_data, expected);
+    }
+
+    fn test_blocking(read_if_no_content_length: bool, tests: Vec<(Vec<&[u8]>, TestParseResult<Message>)>) {
+        test_util::test_blocking(get_message_deframer(read_if_no_content_length), tests)
     }
 
     #[test]
@@ -721,5 +726,37 @@ mod tests {
             true,
             Error::new(ErrorKind::Other, "read limit reached").into(),
         )
+    }
+
+    #[test]
+    fn blocking_with_headers_and_body() {
+        test_blocking(false, vec![
+            (vec![b"GET ", b"/so"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"mera", b"ndomurl "], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"HT"], ErrorKind::WouldBlock.into()),
+            (vec![b"T"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"P"], ErrorKind::WouldBlock.into()),
+            (vec![b"/1.1"], ErrorKind::WouldBlock.into()),
+            (vec![b"\r"], ErrorKind::WouldBlock.into()),
+            (vec![b"\n"], ErrorKind::WouldBlock.into()),
+            (vec![b"hell"], ErrorKind::WouldBlock.into()),
+            (vec![b"o: "], ErrorKind::WouldBlock.into()),
+            (vec![b"value\r\n"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"con", b"te", b"nt", b"-length: 5"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"\r\n"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"\r\n"], ErrorKind::WouldBlock.into()),
+            (vec![b"h"], ErrorKind::WouldBlock.into()),
+            (vec![b"e"], ErrorKind::WouldBlock.into()),
+            (vec![], ErrorKind::WouldBlock.into()),
+            (vec![b"ll"], ErrorKind::WouldBlock.into()),
+            (vec![b"o"], Value(("GET /somerandomurl HTTP/1.1".to_string(), header_map![("content-length", "5"), ("hello", "value")], b"hello".to_vec()))),
+        ])
     }
 }
