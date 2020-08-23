@@ -74,7 +74,7 @@ impl<I, F: ToEmptySlot<I, E>, E: ToFilledSlot<I, F>> Slot<I, F, E> {
     fn fill(&mut self, inner: I) {
         match self {
             Slot::Empty(empty) => {
-                let fill = empty.take().unwrap().to_filled_slot(inner);
+                let fill = empty.take().unwrap().into_filled_slot(inner);
                 *self = Slot::Filled(Some(fill))
             }
             _ => panic!("Filled an already filled slot!")
@@ -84,7 +84,7 @@ impl<I, F: ToEmptySlot<I, E>, E: ToFilledSlot<I, F>> Slot<I, F, E> {
     fn empty(&mut self) -> Option<I> {
         match self {
             Slot::Filled(fill) => {
-                let (inner, empty) = fill.take().unwrap().to_empty_slot();
+                let (inner, empty) = fill.take().unwrap().into_empty_slot();
                 *self = Slot::Empty(Some(empty));
                 Some(inner)
             }
@@ -114,9 +114,9 @@ impl<I, F, E: Default> Default for Slot<I, F, E> {
 }
 
 pub trait ToFilledSlot<Inner, FilledSlot> {
-    fn to_filled_slot(self, inner: Inner) -> FilledSlot;
+    fn into_filled_slot(self, inner: Inner) -> FilledSlot;
 }
 
 pub trait ToEmptySlot<Inner, EmptySlot> {
-    fn to_empty_slot(self) -> (Inner, EmptySlot);
+    fn into_empty_slot(self) -> (Inner, EmptySlot);
 }

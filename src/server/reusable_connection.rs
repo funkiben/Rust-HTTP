@@ -62,14 +62,14 @@ impl<T: Read + Write> Default for BufStream<MaybeStream<T>> {
 }
 
 impl<T: Write + Read> ToFilledSlot<(SocketAddr, T), UsedConnection<T>> for UnusedConnection<T> {
-    fn to_filled_slot(mut self, (addr, inner): (SocketAddr, T)) -> UsedConnection<T> {
+    fn into_filled_slot(mut self, (addr, inner): (SocketAddr, T)) -> UsedConnection<T> {
         self.replace_inner(MaybeStream::Stream(inner));
         Connection::new(addr, self)
     }
 }
 
 impl<T: Write + Read> ToEmptySlot<(SocketAddr, T), UnusedConnection<T>> for UsedConnection<T> {
-    fn to_empty_slot(self) -> ((SocketAddr, T), UnusedConnection<T>) {
+    fn into_empty_slot(self) -> ((SocketAddr, T), UnusedConnection<T>) {
         let addr = self.addr;
         let mut stream = self.into_inner();
         let old = stream.replace_inner(MaybeStream::Empty);
