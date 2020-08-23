@@ -9,6 +9,21 @@ impl<T: Read + Write> BufStream<T> {
         BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
     }
 
+    /// Creates a new buffered stream with default capacities.
+    pub fn new(inner: T) -> BufStream<T> {
+        BufStream(BufWriter::new(WriteableBufReader(BufReader::new(inner))))
+    }
+
+    /// Replaces the inner stream in the buffered reader. Returns the old inner stream.
+    pub fn replace_inner(&mut self, new: T) -> T {
+        // Flush the writer buffer
+        self.0.flush().unwrap_or_default();
+        // Consume all the contents of the read buffer
+        self.consume(self.0.get_ref().0.buffer().len());
+
+        std::mem::replace(self.0.get_mut().0.get_mut(), new)
+    }
+
     pub fn inner_ref(&self) -> &T {
         self.0.get_ref().0.get_ref()
     }

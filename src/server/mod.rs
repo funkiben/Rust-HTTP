@@ -2,6 +2,10 @@ pub use config::*;
 pub use router::*;
 pub use server::*;
 
+mod slots;
+
+mod reusable_connection;
+
 /// Entry point for starting a server.
 mod server;
 /// Config for a server.

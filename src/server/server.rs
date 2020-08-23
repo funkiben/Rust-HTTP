@@ -2,7 +2,7 @@ use std::io::{BufRead, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use mio::net::TcpStream;
-use rustls::{ServerSession};
+use rustls::ServerSession;
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
@@ -156,7 +156,7 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::with_capacities(stream, 1024, 1024));
+        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::new(stream));
 
         respond_to_requests(&mut connection, &router);
 

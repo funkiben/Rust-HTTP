@@ -67,6 +67,10 @@ impl<S: BufRead + Write> Connection<S> {
     pub fn stream_ref(&self) -> &S {
         &self.stream
     }
+
+    pub fn into_inner(self) -> S {
+        self.stream
+    }
 }
 
 impl<S: BufRead + Write> Write for Connection<S> {
