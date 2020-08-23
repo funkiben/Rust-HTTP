@@ -74,7 +74,7 @@ fn parse_method(raw: &str) -> Result<Method, ParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
+    use std::io::{ErrorKind, BufReader};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
@@ -85,6 +85,8 @@ mod tests {
     use crate::parse::test_util;
     use crate::parse::test_util::TestParseResult;
     use crate::parse::test_util::TestParseResult::{ParseErr, Value};
+    use crate::util::mock::MockReader;
+    use crate::parse::parse::{Parse, ParseStatus};
 
     fn test_with_eof(data: Vec<&str>, expected: TestParseResult<Request>) {
         test_util::test_with_eof(RequestParser::new(), data, expected);
@@ -471,5 +473,69 @@ mod tests {
                 headers: header_map![(CONTENT_LENGTH, "0")],
                 body: vec![],
             }))
+    }
+
+    #[test]
+    fn has_data_false() {
+        let parser = RequestParser::new();
+        assert!(!parser.has_data())
+    }
+
+    #[test]
+    fn has_data_false_with_failed_read() {
+        let parser = RequestParser::new();
+
+        let mut reader = MockReader::from_strs(vec![]);
+        reader.return_would_block_when_empty = true;
+
+        let mut reader = BufReader::new(reader);
+
+        match parser.parse(&mut reader) {
+            Ok(ParseStatus::IoErr(parser, err)) if err.kind() == ErrorKind::WouldBlock => assert!(!parser.has_data()),
+            _ => panic!("parse gave unexpected result")
+        }
+    }
+
+    #[test]
+    fn has_data_false_with_eof_read() {
+        let parser = RequestParser::new();
+
+        let reader = MockReader::from_strs(vec![""]);
+        let mut reader = BufReader::new(reader);
+
+        match parser.parse(&mut reader) {
+            Ok(ParseStatus::IoErr(parser, err)) if err.kind() == ErrorKind::UnexpectedEof => assert!(!parser.has_data()),
+            _ => panic!("parse gave unexpected result")
+        }
+    }
+
+    #[test]
+    fn has_data_true() {
+        let parser = RequestParser::new();
+
+        let mut reader = MockReader::from_strs(vec!["hello"]);
+        reader.return_would_block_when_empty = true;
+
+        let mut reader = BufReader::new(reader);
+
+        match parser.parse(&mut reader) {
+            Ok(ParseStatus::IoErr(parser, err)) if err.kind() == ErrorKind::WouldBlock => assert!(parser.has_data()),
+            _ => panic!("parse gave unexpected result")
+        }
+    }
+
+    #[test]
+    fn has_data_true_more_than_first_line() {
+        let parser = RequestParser::new();
+
+        let mut reader = MockReader::from_strs(vec!["GET / HTTP/1.1\r\nhello: hi\r\n"]);
+        reader.return_would_block_when_empty = true;
+
+        let mut reader = BufReader::new(reader);
+
+        match parser.parse(&mut reader) {
+            Ok(ParseStatus::IoErr(parser, err)) if err.kind() == ErrorKind::WouldBlock => assert!(parser.has_data()),
+            _ => panic!("parse gave unexpected result")
+        }
     }
 }
