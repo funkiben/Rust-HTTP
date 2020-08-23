@@ -10,3 +10,5 @@ pub mod buf_stream;
 
 /// Stream that automatically handles TLS.
 pub mod tls_stream;
+
+pub mod slab;

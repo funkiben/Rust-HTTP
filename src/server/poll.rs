@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 
@@ -6,25 +5,26 @@ use mio::{Events, Interest, Poll, Token};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 
+use crate::util::slab::Slab;
+
 /// The number of IO events processed at a time.
 const POLL_EVENT_CAPACITY: usize = 128;
 
-/// Initial number of connections allocated.
-const CONNECTION_CAPACITY: usize = 128;
+/// Initial number of connections to allocate space for.
+const INITIAL_CONNECTION_CAPACITY: usize = 128;
 
 /// Listens asynchronously on the given address. Calls make_connection for each new stream, and
 /// calls on_readable_connection for each stream that is read ready.
 /// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
 pub fn listen<T>(addr: SocketAddr, on_new_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
-    const SERVER_TOKEN: Token = Token(0);
+    const SERVER_TOKEN: Token = Token(usize::MAX);
 
     let mut listener = TcpListener::bind(addr)?;
-    let mut connections = HashMap::with_capacity(CONNECTION_CAPACITY);
+
+    let mut connection_slab = Slab::with_capacity(INITIAL_CONNECTION_CAPACITY);
 
     let poll = Poll::new()?;
     poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
-
-    let mut next_token = SERVER_TOKEN.0 + 1;
 
     poll_events(
         poll,
@@ -32,20 +32,18 @@ pub fn listen<T>(addr: SocketAddr, on_new_connection: impl Fn(TcpStream, SocketA
             match event.token() {
                 SERVER_TOKEN => {
                     listen_until_blocked(&listener, |(mut stream, addr)| {
-                        let token = Token(next_token);
-                        next_token += 1;
-                        poll.registry().register(&mut stream, token, Interest::READABLE)?;
-
-                        connections.insert(token, on_new_connection(stream, addr));
+                        let token = connection_slab.next_key();
+                        poll.registry().register(&mut stream, Token(token), Interest::READABLE)?;
+                        connection_slab.insert(on_new_connection(stream, addr));
 
                         Ok(())
                     });
                 }
-                token if event.is_read_closed() => {
-                    connections.remove(&token);
+                token if event.is_write_closed() => {
+                    connection_slab.remove(token.0);
                 }
                 token => {
-                    connections.get(&token).map(&on_readable_connection);
+                    connection_slab.get(token.0).map(&on_readable_connection);
                 }
             },
     )

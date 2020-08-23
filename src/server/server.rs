@@ -34,7 +34,7 @@ pub fn start(config: Config) -> std::io::Result<()> {
     let config = Arc::new(config);
 
     if let Some(tls_config) = &config.tls_config {
-        listen_with(&config, |stream| TlsStream::new(stream, ServerSession::new(tls_config)))
+        listen_with(&config, |stream| TlsStream::new(ServerSession::new(tls_config), stream))
     } else {
         listen_with(&config, |stream| stream)
     }

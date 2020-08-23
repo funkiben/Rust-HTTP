@@ -10,7 +10,7 @@ impl<S: Session, T: Read + Write> TlsStream<S, T> {
     /// Creates a new TLS stream with the given inner stream and session.
     /// The inner stream is used for reading TLS data in and writing TLS data out.
     /// When the TLS stream goes out of scope, it will send a close_notify message.
-    pub fn new(inner: T, session: S) -> TlsStream<S, T> {
+    pub fn new(session: S, inner: T) -> TlsStream<S, T> {
         TlsStream(StreamOwned::new(session, inner))
     }
 }
