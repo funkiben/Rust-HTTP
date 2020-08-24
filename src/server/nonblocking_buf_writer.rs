@@ -1,9 +1,11 @@
 use std::io::{ErrorKind, Result, Write};
 
+/// The default capacity of the buffer.
 const DEFAULT_CAPACITY: usize = 8 * 1024;
 
 /// A buffered writer that handles WouldBlock errors.
-/// WouldBlock errors
+/// WouldBlock errors simply stop execution of either a flush or a write, and remaining unwritten
+/// data is stored in a buffer.
 pub struct NonBlockingBufWriter<T> {
     buf: Vec<u8>,
     pos: usize,
