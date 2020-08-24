@@ -127,6 +127,7 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     Ok(())
 }
 
+/// Allows control over an underlying TcpStreams nonblocking setting
 pub(super) trait SetNonBlocking {
     fn set_nonblocking(&self, nonblocking: bool);
 }
