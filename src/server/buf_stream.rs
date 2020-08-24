@@ -7,13 +7,8 @@ pub struct BufStream<T>(BufReader<NonBlockingBufWriter<T>>);
 
 impl<T: Read + Write> BufStream<T> {
     /// Creates a new buffered stream with the given capacity for its buffer.
-    pub fn with_capacity(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
+    pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
         BufStream(BufReader::with_capacity(read_buffer_capacity, NonBlockingBufWriter::with_capacity(write_buffer_capacity, inner)))
-    }
-
-    /// Creates a new buffered stream with the default buffer size.
-    pub fn new(inner: T) -> BufStream<T> {
-        BufStream(BufReader::new(NonBlockingBufWriter::new(inner)))
     }
 
     /// Gets a reference to the inner stream.
@@ -65,7 +60,7 @@ mod test {
     fn test_buf_read_and_write() -> std::io::Result<()> {
         let reader = MockReader::from_strs(vec!["hello", "\nworld", "!"]);
         let writer = MockWriter::new();
-        let mut stream = BufStream::new(MockStream::new(reader, writer));
+        let mut stream = BufStream::with_capacities(MockStream::new(reader, writer), 1024, 1024);
 
         let mut buf = String::new();
         stream.read_line(&mut buf)?;

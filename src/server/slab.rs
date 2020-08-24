@@ -8,12 +8,6 @@ pub struct Slab<T> {
 }
 
 impl<T> Slab<T> {
-    /// Creates an empty slots structure with no allocation.
-    /// Allocation will occur on the first insertion.
-    pub fn new() -> Slab<T> {
-        Self::with_capacity(0)
-    }
-
     /// Creates a new slab with the given capacity. "capacity" specifies how many empty slots will be allocated.
     pub fn with_capacity(capacity: usize) -> Slab<T> {
         Slab { data: Vec::with_capacity(capacity), open_slots: LinkedList::new() }
@@ -98,7 +92,7 @@ mod tests {
 
     #[test]
     fn double_removal() {
-        let mut slab = Slab::new();
+        let mut slab = Slab::with_capacity(0);
 
         let x = slab.insert("a");
 
@@ -112,14 +106,14 @@ mod tests {
 
     #[test]
     fn key_out_of_bounds() {
-        let slab = Slab::<String>::new();
+        let slab = Slab::<String>::with_capacity(0);
 
         assert!(slab.get(1000).is_none())
     }
 
     #[test]
     fn remove_key_out_of_bounds() {
-        let mut slab = Slab::<String>::new();
+        let mut slab = Slab::<String>::with_capacity(0);
 
         assert!(slab.remove(1000).is_none())
     }

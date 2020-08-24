@@ -50,7 +50,7 @@ fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_co
     listen(addr,
            |socket, addr| {
                let stream = on_new_connection(socket);
-               let connection = Connection::new(addr, BufStream::with_capacity(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
+               let connection = Connection::new(addr, BufStream::with_capacities(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
                Arc::new(Mutex::new(Some(connection)))
            },
            |connection| {
@@ -175,7 +175,7 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::new(stream));
+        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::with_capacities(stream, 64, 64));
 
         respond_to_requests(&mut connection, &router);
 

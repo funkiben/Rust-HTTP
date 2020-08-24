@@ -1,8 +1,5 @@
 use std::io::{ErrorKind, Result, Write};
 
-/// The default capacity of the buffer.
-const DEFAULT_CAPACITY: usize = 8 * 1024;
-
 /// A buffered writer that handles WouldBlock errors.
 /// WouldBlock errors simply stop execution of either a flush or a write, and remaining unwritten
 /// data is stored in a buffer.
@@ -17,11 +14,6 @@ impl<T: Write> NonBlockingBufWriter<T> {
     /// Creates a new writer with a buffer that has the given capacity.
     pub fn with_capacity(capacity: usize, inner: T) -> NonBlockingBufWriter<T> {
         NonBlockingBufWriter { pos: 0, buf: Vec::with_capacity(capacity), inner, inner_needs_flush: false }
-    }
-
-    /// Creates a new writer with a buffer of default capacity.
-    pub fn new(inner: T) -> NonBlockingBufWriter<T> {
-        Self::with_capacity(DEFAULT_CAPACITY, inner)
     }
 
     /// Checks if the given writer has unflushed data. flush() should be called when the underlying
