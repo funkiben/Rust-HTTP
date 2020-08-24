@@ -494,9 +494,10 @@ fn insanely_huge_body() {
 
 #[test]
 fn big_image_response() {
-    let file_data = fs::read("./files/big_image.jpg").unwrap();
+    let file_data = fs::read("./tests/files/big_image.jpg").unwrap();
 
-    let expected_response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec().extend_from_slice(&file_data);
+    let mut expected_response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+    expected_response.extend_from_slice(&file_data);
 
     let response = Response {
         status: status::OK,
@@ -518,13 +519,12 @@ fn big_image_response() {
 
     sleep(Duration::from_millis(50));
 
-    let mut client = TcpStream::connect("0.0.0.0").unwrap();
+    let mut client = TcpStream::connect("0.0.0.0:7013").unwrap();
 
     client.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
 
-    let mut actual_response = vec![];
+    let mut actual_response = vec![0; expected_response.len()];
+    client.read_exact(&mut actual_response).unwrap();
 
-    client.read_to_end(&mut actual_response).unwrap();
-
-    assert_eq!(expected_response, expected_response);
+    assert_eq!(actual_response, expected_response);
 }
