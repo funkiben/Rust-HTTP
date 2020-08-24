@@ -13,10 +13,12 @@ use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::common::status::Status;
 use my_http::server::{Config, Router};
-use my_http::server::ListenerResult::SendResponse;
+use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
 
 use crate::util::curl;
 use crate::util::test_server::{test_server, test_server_with_curl};
+use std::fs;
+use std::sync::Arc;
 
 mod util;
 
@@ -490,3 +492,39 @@ fn insanely_huge_body() {
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
+#[test]
+fn big_image_response() {
+    let file_data = fs::read("./files/big_image.jpg").unwrap();
+
+    let expected_response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec().extend_from_slice(&file_data);
+
+    let response = Response {
+        status: status::OK,
+        headers: header_map![],
+        body: file_data
+    };
+
+    let response = Arc::new(response);
+
+    let mut router = Router::new();
+    router.on_prefix("", move |_,_| SendResponseArc(response.clone()));
+
+    spawn(move || server::start(Config {
+        addr: "0.0.0.0:7013",
+        connection_handler_threads: 5,
+        tls_config: None,
+        router
+    }).unwrap());
+
+    sleep(Duration::from_millis(50));
+
+    let mut client = TcpStream::connect("0.0.0.0").unwrap();
+
+    client.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+
+    let mut actual_response = vec![];
+
+    client.read_to_end(&mut actual_response).unwrap();
+
+    assert_eq!(expected_response, expected_response);
+}
