@@ -127,7 +127,7 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     Ok(())
 }
 
-/// Allows control over an underlying TcpStreams nonblocking setting
+/// Allows control over an underlying TcpStreams nonblocking setting.
 pub(super) trait SetNonBlocking {
     fn set_nonblocking(&self, nonblocking: bool);
 }
@@ -159,6 +159,7 @@ impl<T: SetNonBlocking + BufRead + Write> SetNonBlocking for Connection<T> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -171,15 +172,12 @@ mod tests {
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
+    use crate::server::SetNonBlocking;
     use crate::util::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
-    use crate::server::SetNonBlocking;
-    use std::io::{Write, Read};
 
-    impl<R: Read, W: Write> SetNonBlocking for MockStream<R,W> {
-        fn set_nonblocking(&self, nonblocking: bool) {
-
-        }
+    impl<R: Read, W: Write> SetNonBlocking for MockStream<R, W> {
+        fn set_nonblocking(&self, _: bool) {}
     }
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
