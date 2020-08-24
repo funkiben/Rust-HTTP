@@ -179,6 +179,34 @@ fn normal_http_message() {
     client.read_to_string(&mut response).unwrap();
 }
 
+#[test]
+fn curl_many_big_responses_through_concurrent_connections() {
+    let file_data = fs::read("./tests/files/big_image.jpg").unwrap();
+
+    test_server::test_server_with_curl(
+        Config {
+            addr: "0.0.0.0:8006",
+            connection_handler_threads: 5,
+            tls_config: Some(get_tsl_config()),
+            router: Router::new(),
+        },
+        5,
+        vec![(
+            Request {
+                uri: "/".to_string(),
+                method: Method::GET,
+                headers: Default::default(),
+                body: vec![],
+            },
+            Response {
+                status: status::OK,
+                headers: header_map![(CONTENT_LENGTH, file_data.len().to_string())],
+                body: file_data,
+            }
+        ); 5],
+        true)
+}
+
 fn get_tsl_config() -> Arc<ServerConfig> {
     let mut config = ServerConfig::new(NoClientAuth::new());
 

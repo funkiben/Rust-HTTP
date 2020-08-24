@@ -65,18 +65,16 @@ impl<T: Write> NonBlockingBufWriter<T> {
 }
 
 impl<T: Write> Write for NonBlockingBufWriter<T> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if self.pos + buf.len() > self.buf.capacity() {
-            self.flush()?;
-            if self.needs_flush() {
-                self.buf.write(buf)
-            } else {
+    fn write(&mut self, mut buf: &[u8]) -> Result<usize> {
+        // try to avoid allocating more memory for buffer by flushing and then writing large data directly into underlying writer.
+        if self.buf.len() + buf.len() > self.buf.capacity() {
+            self.flush_buf()?;
+            if self.pos == 0 && buf.len() > self.buf.capacity() { // if we flushed the writer but theres still not enough room
                 let amount = write_until_blocked(&mut self.inner, buf)?;
-                self.buf.write(&buf[amount..])
+                buf = &buf[amount..];
             }
-        } else {
-            self.buf.write(buf)
         }
+        self.buf.write(buf)
     }
 
     fn flush(&mut self) -> Result<()> {

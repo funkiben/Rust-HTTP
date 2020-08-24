@@ -493,7 +493,7 @@ fn insanely_huge_body() {
 }
 
 #[test]
-fn big_image_response() {
+fn big_response() {
     let file_data = fs::read("./tests/files/big_image.jpg").unwrap();
 
     let mut expected_response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
@@ -527,4 +527,33 @@ fn big_image_response() {
     client.read_exact(&mut actual_response).unwrap();
 
     assert_eq!(actual_response, expected_response);
+}
+
+#[test]
+fn many_big_responses_through_concurrent_connections() {
+    let file_data = fs::read("./tests/files/big_image.jpg").unwrap();
+
+    test_server(
+        Config {
+            addr: "0.0.0.0:7014",
+            connection_handler_threads: 5,
+            tls_config: None,
+            router: Router::new(),
+        },
+        10, 10, false,
+        vec![
+            (
+                Request {
+                    uri: "/".to_string(),
+                    method: Method::GET,
+                    headers: Default::default(),
+                    body: vec![],
+                },
+                Response {
+                    status: status::OK,
+                    headers: Default::default(),
+                    body: file_data,
+                }
+            )
+        ])
 }
