@@ -74,19 +74,19 @@ fn parse_method(raw: &str) -> Result<Method, ParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{ErrorKind, BufReader};
+    use std::io::{BufReader, ErrorKind};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, HeaderMap};
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
     use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, UnrecognizedMethod, WrongHttpVersion};
+    use crate::parse::parse::{Parse, ParseStatus};
     use crate::parse::request::RequestParser;
     use crate::parse::test_util;
     use crate::parse::test_util::TestParseResult;
     use crate::parse::test_util::TestParseResult::{ParseErr, Value};
     use crate::util::mock::MockReader;
-    use crate::parse::parse::{Parse, ParseStatus};
 
     fn test_with_eof(data: Vec<&str>, expected: TestParseResult<Request>) {
         test_util::test_with_eof(RequestParser::new(), data, expected);

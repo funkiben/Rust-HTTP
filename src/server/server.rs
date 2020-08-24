@@ -8,13 +8,13 @@ use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
+use crate::server::buf_stream::BufStream;
 use crate::server::config::Config;
 use crate::server::connection::{Connection, ReadRequestError};
 use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
 use crate::server::poll::listen;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
-use crate::util::buf_stream::BufStream;
 use crate::util::thread_pool::ThreadPool;
 use crate::util::tls_stream::TlsStream;
 
@@ -26,6 +26,7 @@ const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
 /// Size of connection read buffers.
 const READ_BUF_SIZE: usize = 4096;
+
 /// Size of connection write buffers.
 const WRITE_BUF_SIZE: usize = 2048;
 
@@ -49,13 +50,17 @@ fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_co
     listen(addr,
            |socket, addr| {
                let stream = on_new_connection(socket);
-               let connection = Connection::new(addr, BufStream::with_capacities(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
+               let connection = Connection::new(addr, BufStream::with_capacity(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
                Arc::new(Mutex::new(Some(connection)))
            },
            |connection| {
                let connection = connection.clone();
                let config = config.clone();
                thread_pool.execute(move || handle_read_ready_connection(config, connection));
+           },
+           |connection| {
+               let connection = connection.clone();
+               thread_pool.execute(move || handle_write_ready_connection(connection));
            })
 }
 
@@ -66,6 +71,17 @@ fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connect
     if let Some(mut connection) = lock.take() {
         let should_close = respond_to_requests(&mut connection, &config.router);
         if !should_close {
+            lock.replace(connection);
+        }
+    }
+}
+
+/// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
+fn handle_write_ready_connection<T: BufRead + Write>(connection: Arc<Mutex<Option<Connection<T>>>>) {
+    let mut lock = connection.lock().unwrap();
+
+    if let Some(mut connection) = lock.take() {
+        if connection.flush().is_ok() {
             lock.replace(connection);
         }
     }
@@ -119,8 +135,8 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
             write!(writer, "{}: {}\r\n", header, value)?;
         }
     }
-    writer.write_all(b"\r\n")?;
-    writer.write_all(&response.body)?;
+    writer.write(b"\r\n")?;
+    writer.write(&response.body)?;
     writer.flush()?;
     Ok(())
 }
@@ -136,11 +152,11 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status;
     use crate::common::status::Status;
+    use crate::server::buf_stream::BufStream;
     use crate::server::connection::Connection;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
-    use crate::util::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
@@ -164,7 +180,7 @@ mod tests {
         respond_to_requests(&mut connection, &router);
 
         let actual_output = connection.stream_ref().inner_ref().writer.flushed.concat();
-        let actual_output = String::from_utf8_lossy(&actual_output);
+        let actual_output = String::from_utf8(actual_output).unwrap();
 
         assert_eq!(expected_output, actual_output);
         assert_eq!(expected_requests, actual_requests.lock().unwrap().to_vec());

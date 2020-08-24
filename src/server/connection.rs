@@ -1,4 +1,4 @@
-use std::io::{BufRead, ErrorKind,  Write};
+use std::io::{BufRead, ErrorKind, Write};
 use std::net::SocketAddr;
 
 use crate::common::request::Request;
@@ -29,7 +29,7 @@ pub enum ReadRequestError {
     IoErr(std::io::Error),
 }
 
-/// A connection to a client. The main purpose of this is to store the state of request parsing for asynchronous IO.
+/// A connection to a client. The main purpose of this is to store the state of asynchronous IO.
 pub struct Connection<S: BufRead + Write> {
     /// The address of the client.
     pub addr: SocketAddr,

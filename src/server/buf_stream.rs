@@ -1,29 +1,34 @@
-use std::io::{BufRead, BufReader, BufWriter, Read, Result, Write};
+use std::io::{BufRead, BufReader, Read, Result, Write};
 
-/// A buffered stream. Stores buffers for writing and reading.
-/// Uses BufWriter and BufReader for buffer implementations.
-pub struct BufStream<T: Write>(BufWriter<WriteableBufReader<T>>);
+use crate::server::nonblocking_buf_writer::NonBlockingBufWriter;
+
+/// A buffered stream using a BufReader and a NonBlockingBufWriter.
+pub struct BufStream<T>(BufReader<NonBlockingBufWriter<T>>);
 
 impl<T: Read + Write> BufStream<T> {
-    /// Creates a new buffered stream with the given capacities for its buffers.
-    pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
-        BufStream(BufWriter::with_capacity(write_buffer_capacity, WriteableBufReader(BufReader::with_capacity(read_buffer_capacity, inner))))
+    /// Creates a new buffered stream with the given capacity for its buffer.
+    pub fn with_capacity(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
+        BufStream(BufReader::with_capacity(read_buffer_capacity, NonBlockingBufWriter::with_capacity(write_buffer_capacity, inner)))
     }
 
-    /// Creates a new buffered stream with the default buffer sizes.
+    /// Creates a new buffered stream with the default buffer size.
     pub fn new(inner: T) -> BufStream<T> {
-        BufStream(BufWriter::new(WriteableBufReader(BufReader::new(inner))))
+        BufStream(BufReader::new(NonBlockingBufWriter::new(inner)))
     }
 
     /// Gets a reference to the inner stream.
     pub fn inner_ref(&self) -> &T {
-        self.0.get_ref().0.get_ref()
+        self.0.get_ref().inner_ref()
     }
 }
 
-struct WriteableBufReader<T>(BufReader<T>);
+impl<T: Read + Write> Read for BufStream<T> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.0.read(buf)
+    }
+}
 
-impl<T: Write> Write for WriteableBufReader<T> {
+impl<T: Read + Write> Write for BufStream<T> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.0.get_mut().write(buf)
     }
@@ -33,37 +38,27 @@ impl<T: Write> Write for WriteableBufReader<T> {
     }
 }
 
-impl<T: Read + Write> Read for BufStream<T> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.0.get_mut().0.read(buf)
-    }
-}
-
-impl<T: Read + Write> Write for BufStream<T> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        self.0.flush()
-    }
-}
-
 impl<T: Read + Write> BufRead for BufStream<T> {
     fn fill_buf(&mut self) -> Result<&[u8]> {
-        self.0.get_mut().0.fill_buf()
+        self.0.fill_buf()
     }
 
     fn consume(&mut self, amt: usize) {
-        self.0.get_mut().0.consume(amt)
+        self.0.consume(amt)
+    }
+}
+
+impl<T: Read + Write> Read for NonBlockingBufWriter<T> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.inner_mut().read(buf)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::io::{Write, BufRead};
+    use std::io::{BufRead, Write};
 
-    use crate::util::buf_stream::BufStream;
+    use crate::server::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
 
     #[test]

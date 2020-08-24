@@ -99,13 +99,13 @@ mod tests {
     use std::io::{Error, ErrorKind};
 
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps, TRANSFER_ENCODING};
+    use crate::header_map;
     use crate::parse::crlf_line::CrlfLineParser;
     use crate::parse::error::ParsingError::{BadSyntax, InvalidChunkSize, InvalidHeaderValue};
     use crate::parse::message::MessageParser;
     use crate::parse::test_util;
     use crate::parse::test_util::TestParseResult;
     use crate::parse::test_util::TestParseResult::{ParseErr, Value};
-    use crate::header_map;
 
     type Message = (String, HeaderMap, Vec<u8>);
     type Parser = MessageParser<CrlfLineParser, String>;

@@ -55,7 +55,7 @@ impl<T> Slab<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::slab::Slab;
+    use crate::server::slab::Slab;
 
     #[test]
     fn test_insertion() {
@@ -80,10 +80,10 @@ mod tests {
     fn test_removal() {
         let mut slab = Slab::with_capacity(2);
 
-        let x =  slab.insert("a");
-        let y =  slab.insert("b");
-        let z =  slab.insert("c");
-        let w =  slab.insert("d");
+        let x = slab.insert("a");
+        let y = slab.insert("b");
+        let z = slab.insert("c");
+        let w = slab.insert("d");
 
         slab.remove(x);
         slab.remove(y);
@@ -97,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn double_removal(){
+    fn double_removal() {
         let mut slab = Slab::new();
 
         let x = slab.insert("a");
