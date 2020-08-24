@@ -13,6 +13,10 @@ impl<S: Session, T: Read + Write> TlsStream<S, T> {
     pub fn new(session: S, inner: T) -> TlsStream<S, T> {
         TlsStream(StreamOwned::new(session, inner))
     }
+
+    pub fn inner_ref(&self) -> &T {
+        &self.0.sock
+    }
 }
 
 impl<S: Session, T: Read + Write> Read for TlsStream<S, T> {

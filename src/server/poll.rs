@@ -1,63 +1,61 @@
 use std::io::ErrorKind;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 
-use mio::{Events, Interest, Poll, Token};
-use mio::event::Event;
-use mio::net::{TcpListener, TcpStream};
+use popol::{Event, Events, interest, Sources};
 
 use crate::util::slab::Slab;
 
-/// The number of IO events processed at a time.
-const POLL_EVENT_CAPACITY: usize = 128;
-
-/// Initial number of connections to allocate space for.
-const INITIAL_CONNECTION_CAPACITY: usize = 128;
+#[derive(Eq, PartialEq, Clone)]
+enum Source {
+    Client(usize),
+    Listener,
+}
 
 /// Listens asynchronously on the given address. Calls make_connection for each new stream, and
 /// calls on_readable_connection for each stream that is read ready.
 /// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
 pub fn listen<T>(addr: SocketAddr, on_new_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T)) -> std::io::Result<()> {
-    const SERVER_TOKEN: Token = Token(usize::MAX);
+    let listener = TcpListener::bind(addr)?;
+    listener.set_nonblocking(true)?;
 
-    let mut listener = TcpListener::bind(addr)?;
+    let mut sources = Sources::new();
 
-    let mut connection_slab = Slab::with_capacity(INITIAL_CONNECTION_CAPACITY);
+    sources.register(Source::Listener, &listener, interest::READ);
 
-    let poll = Poll::new()?;
-    poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
+    let mut connections = Slab::new();
 
     poll_events(
-        poll,
-        |poll, event|
-            match event.token() {
-                SERVER_TOKEN => {
-                    listen_until_blocked(&listener, |(mut stream, addr)| {
-                        let token = connection_slab.next_key();
-                        poll.registry().register(&mut stream, Token(token), Interest::READABLE)?;
-                        connection_slab.insert(on_new_connection(stream, addr));
-
+        sources,
+        |sources, key, event|
+            match key {
+                Source::Listener => {
+                    listen_until_blocked(&listener, |(stream, addr)| {
+                        let key = connections.next_key();
+                        stream.set_nonblocking(true)?;
+                        sources.register(Source::Client(key), &stream, interest::READ);
+                        connections.insert(on_new_connection(stream, addr));
                         Ok(())
                     });
                 }
-                token if event.is_write_closed() => {
-                    connection_slab.remove(token.0);
+                Source::Client(key) if event.errored => {
+                    connections.remove(*key);
                 }
-                token => {
-                    connection_slab.get(token.0).map(&on_readable_connection);
+                Source::Client(key) => {
+                    connections.get(*key).map(&on_readable_connection);
                 }
             },
     )
 }
 
 /// Pulls events out of the given poll and passes them to on_event. Loops indefinitely.
-fn poll_events(mut poll: Poll, mut on_event: impl FnMut(&mut Poll, &Event)) -> std::io::Result<()> {
-    let mut events = Events::with_capacity(POLL_EVENT_CAPACITY);
+fn poll_events<T: Clone + Eq>(mut sources: Sources<T>, mut on_event: impl FnMut(&mut Sources<T>, &T, Event)) -> std::io::Result<()> {
+    let mut events = Events::new();
 
     loop {
-        poll.poll(&mut events, None)?;
+        sources.wait(&mut events)?;
 
-        for event in &events {
-            on_event(&mut poll, event);
+        for (key, event) in events.iter() {
+            on_event(&mut sources, key, event);
         }
     }
 }

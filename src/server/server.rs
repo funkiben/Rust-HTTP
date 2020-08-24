@@ -1,7 +1,7 @@
 use std::io::{BufRead, Read, Write};
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
-use mio::net::TcpStream;
 use rustls::ServerSession;
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
@@ -42,7 +42,7 @@ pub fn start(config: Config) -> std::io::Result<()> {
 
 /// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
 /// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
-fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
+fn listen_with<T: Read + Write + Send + 'static + SetNonBlocking>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
     let addr = config.addr.parse().expect("Invalid socket address");
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
 
@@ -60,7 +60,7 @@ fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_co
 }
 
 /// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
-fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
+fn handle_read_ready_connection<T: BufRead + Write + SetNonBlocking>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
     let mut lock = connection.lock().unwrap();
 
     if let Some(mut connection) = lock.take() {
@@ -72,11 +72,13 @@ fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connect
 }
 
 /// Responds to requests in the given connection using the given router. Returns true if the connection should be dropped.
-fn respond_to_requests<T: BufRead + Write>(connection: &mut Connection<T>, router: &Router) -> bool {
+fn respond_to_requests<T: BufRead + Write + SetNonBlocking>(connection: &mut Connection<T>, router: &Router) -> bool {
     loop {
         match connection.read_request() {
             Ready(request) => {
+                connection.set_nonblocking(false);
                 let write_result = write_response_from_router(connection, router, &request);
+                connection.set_nonblocking(true);
                 if write_result.is_err() || should_close_after_response(&request) { return true; }
             }
             NotReady => return false,
@@ -125,6 +127,34 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
     Ok(())
 }
 
+pub(super) trait SetNonBlocking {
+    fn set_nonblocking(&self, nonblocking: bool);
+}
+
+impl SetNonBlocking for TcpStream {
+    fn set_nonblocking(&self, nonblocking: bool) {
+        self.set_nonblocking(nonblocking).unwrap()
+    }
+}
+
+impl SetNonBlocking for TlsStream<ServerSession, TcpStream> {
+    fn set_nonblocking(&self, nonblocking: bool) {
+        self.inner_ref().set_nonblocking(nonblocking).unwrap()
+    }
+}
+
+impl<T: SetNonBlocking + Write + Read> SetNonBlocking for BufStream<T> {
+    fn set_nonblocking(&self, nonblocking: bool) {
+        self.inner_ref().set_nonblocking(nonblocking)
+    }
+}
+
+impl<T: SetNonBlocking + BufRead + Write> SetNonBlocking for Connection<T> {
+    fn set_nonblocking(&self, nonblocking: bool) {
+        self.stream_ref().set_nonblocking(nonblocking)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -142,6 +172,14 @@ mod tests {
     use crate::server::server::{respond_to_requests, write_response};
     use crate::util::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
+    use crate::server::SetNonBlocking;
+    use std::io::{Write, Read};
+
+    impl<R: Read, W: Write> SetNonBlocking for MockStream<R,W> {
+        fn set_nonblocking(&self, nonblocking: bool) {
+
+        }
+    }
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader::from_strs(input);
