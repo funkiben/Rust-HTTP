@@ -422,9 +422,8 @@ fn infinite_connection() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
@@ -449,9 +448,8 @@ fn infinite_connection_with_sleeps() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
@@ -477,9 +475,8 @@ fn infinite_headers() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
@@ -505,9 +502,8 @@ fn infinite_header_value() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
@@ -533,9 +529,8 @@ fn infinite_chunked_body() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 
@@ -561,9 +556,8 @@ fn insanely_huge_body() {
     }
 
     let mut response = String::new();
-    let read_result = client.read_to_string(&mut response);
+    client.read_to_string(&mut response).unwrap_or_default();
 
-    assert!(read_result.is_err());
     assert_eq!("HTTP/1.1 400 Bad Request\r\n\r\n", response);
 }
 

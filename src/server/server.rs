@@ -76,7 +76,7 @@ fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connect
     }
 }
 
-/// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
+/// Tries to flush the connection. If the connection can't be flushed, then it's dropped.
 fn handle_write_ready_connection<T: BufRead + Write>(connection: Arc<Mutex<Option<Connection<T>>>>) {
     let mut lock = connection.lock().unwrap();
 
