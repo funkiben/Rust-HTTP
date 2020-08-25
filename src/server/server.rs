@@ -28,7 +28,7 @@ const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 const READ_BUF_SIZE: usize = 4096;
 
 /// Size of connection write buffers.
-const WRITE_BUF_SIZE: usize = 2048;
+const WRITE_BUF_SIZE: usize = 4096;
 
 /// Starts the HTTP server. This function will block and listen for new connections.
 pub fn start(config: Config) -> std::io::Result<()> {
