@@ -145,6 +145,81 @@ fn many_connections_and_many_large_messages() {
 }
 
 #[test]
+fn many_connections_and_many_large_messages_no_delays() {
+    let test_html = std::fs::read("./tests/files/test.html").unwrap();
+    let test_jpg = std::fs::read("./tests/files/test.jpg").unwrap();
+    test_server(
+        Config {
+            addr: "0.0.0.0:7015",
+            connection_handler_threads: 5,
+            tls_config: None,
+            router: Router::new(),
+        },
+        200, 50, false,
+        vec![
+            (
+                Request {
+                    uri: "/hello/world/html".to_string(),
+                    method: Method::GET,
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_jpg.len().to_string()),
+                        ("custom-header", "custom header value"),
+                        ("custom-header", "custom header value2"),
+                        ("custom-header", "custom header value3"),
+                        ("custom-header", "custom header value4"),
+                        ("custom-header", "custom header value5"),
+                        ("custom-header", "custom header value6"),
+                        ("custom-header", "custom header value7"),
+                        ("custom-header", "custom header value8"),
+                        ("custom-header", "custom header value9"),
+                        ("custom-header", "custom header value10"),
+                        ("custom-header", "custom header value11"),
+                        ("accept", "blah blah blah"),
+                        ("hello", "bye"),
+                        ("bye", "hello"),
+                        ("heyy", "foijr ewoi fjeigruh jseliurgh seliug he fowiuejf oweifj oweijfow "),
+                        ("host", "yahayah"),
+                        ("date", "rwgwrfwef"),
+                        ("time", "freg esrg erg"),
+                        ("expect", "freg esrg iofj wioefj pweijfo weijfp qwiefj pqeifjperg"),
+                        ("expires", "freg esrgeo urghj oeuirhgj oeiwjrgp wiejf pweifj pweijfpwrg erg"),
+                        ("forwarded", "freg esrg erg"),
+                    ],
+                    body: test_jpg,
+                },
+                Response {
+                    status: Status {
+                        code: 505,
+                        reason: "helloooo",
+                    },
+                    headers: header_map![
+                        (CONTENT_LENGTH, test_html.len().to_string()),
+                        (ACCEPT, "blah blah blah"),
+                        (ACCEPT_CHARSET, "blah blah blah"),
+                        (ACCEPT_ENCODING, "blah blah blah efwi jwef wef "),
+                        (ACCEPT_LANGUAGE, "blah blah blah"),
+                        (ACCEPT_RANGES, "blah blwef wefpoi wjefi wjepf wah blah"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 1"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 2"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 3"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 4"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 5"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 6"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 7"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 8"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 9"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 10"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 11"),
+                        ("hello", "blah blwef wefpoi wjefi wjepf wah blah 12"),
+                    ],
+                    body: test_html,
+                }
+            )
+        ])
+}
+
+
+#[test]
 fn curl_request() {
     let mut router = Router::new();
 
@@ -185,7 +260,7 @@ fn curl_many_connections_and_many_large_messages() {
             tls_config: None,
             router: Router::new(),
         },
-        20,
+        100,
         vec![
             (
                 Request {
@@ -247,7 +322,7 @@ fn curl_many_connections_and_many_large_messages() {
 }
 
 #[test]
-fn many_connections_with_one_simple_request() {
+fn many_connections_with_one_simple_request_no_delays() {
     test_server(
         Config {
             addr: "0.0.0.0:7002",
