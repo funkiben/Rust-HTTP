@@ -81,10 +81,11 @@ fn write_until_blocked<W: Write>(writer: &mut W, buf: &[u8]) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::mock::MockWriter;
-    use crate::server::nonblocking_buf_writer::NonBlockingBufWriter;
     use std::io::Write;
     use std::ops::Deref;
+
+    use crate::server::nonblocking_buf_writer::NonBlockingBufWriter;
+    use crate::util::mock::MockWriter;
 
     #[test]
     fn writes_and_flushes_with_no_blocking() {
@@ -110,7 +111,5 @@ mod tests {
         writer.flush().unwrap();
 
         assert_eq!(flushed.borrow().deref(), &vec![b"hello 1hello 2".to_vec(), b"hello 3".to_vec(), b"this is big and wont fit in the buffer".to_vec()]);
-
-
     }
 }
