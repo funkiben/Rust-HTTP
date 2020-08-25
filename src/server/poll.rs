@@ -13,41 +13,38 @@ const POLL_EVENT_CAPACITY: usize = 128;
 /// Initial number of connections to allocate space for.
 const INITIAL_CONNECTION_CAPACITY: usize = 128;
 
+/// Token used for the listener.
+const LISTENER_TOKEN: Token = Token(usize::MAX);
+
 /// Listens asynchronously on the given address. Calls make_connection for each new stream, and
 /// calls on_readable_connection for each stream that is read ready.
 /// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
-pub fn listen<T>(addr: SocketAddr, on_new_connection: impl Fn(TcpStream, SocketAddr) -> T, on_readable_connection: impl Fn(&T), on_writeable_connection: impl Fn(&T)) -> std::io::Result<()> {
-    const SERVER_TOKEN: Token = Token(usize::MAX);
-
+pub fn listen<T>(addr: SocketAddr,
+                 on_new_connection: impl Fn(TcpStream, SocketAddr) -> T,
+                 on_readable_connection: impl Fn(&T),
+                 on_writeable_connection: impl Fn(&T)) -> std::io::Result<()> {
     let mut listener = TcpListener::bind(addr)?;
 
-    let mut connection_slab = Slab::with_capacity(INITIAL_CONNECTION_CAPACITY);
-
     let poll = Poll::new()?;
-    poll.registry().register(&mut listener, SERVER_TOKEN, Interest::READABLE)?;
+    poll.registry().register(&mut listener, LISTENER_TOKEN, Interest::READABLE)?;
+
+    let mut connections = Slab::with_capacity(INITIAL_CONNECTION_CAPACITY);
 
     poll_events(
         poll,
         |poll, event|
             match event.token() {
-                SERVER_TOKEN => {
+                LISTENER_TOKEN => {
                     listen_until_blocked(&listener, |(mut stream, addr)| {
-                        let token = connection_slab.next_key();
+                        let token = connections.next_key();
                         poll.registry().register(&mut stream, Token(token), Interest::READABLE | Interest::WRITABLE)?;
-                        connection_slab.insert(on_new_connection(stream, addr));
-
+                        connections.insert(on_new_connection(stream, addr));
                         Ok(())
                     });
                 }
-                token if event.is_write_closed() => {
-                    connection_slab.remove(token.0);
-                }
-                token if event.is_readable() => {
-                    connection_slab.get(token.0).map(&on_readable_connection);
-                }
-                token if event.is_writable() => {
-                    connection_slab.get(token.0).map(&on_writeable_connection);
-                }
+                token if event.is_write_closed() => { connections.remove(token.0); }
+                token if event.is_readable() => { connections.get(token.0).map(&on_readable_connection); }
+                token if event.is_writable() => { connections.get(token.0).map(&on_writeable_connection); }
                 _ => {}
             },
     )
