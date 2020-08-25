@@ -1,7 +1,9 @@
 extern crate my_http;
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
@@ -17,8 +19,6 @@ use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
 
 use crate::util::curl;
 use crate::util::test_server::{test_server, test_server_with_curl};
-use std::fs;
-use std::sync::Arc;
 
 mod util;
 
@@ -577,19 +577,19 @@ fn big_response() {
     let response = Response {
         status: status::OK,
         headers: header_map![],
-        body: file_data
+        body: file_data,
     };
 
     let response = Arc::new(response);
 
     let mut router = Router::new();
-    router.on_prefix("", move |_,_| SendResponseArc(response.clone()));
+    router.on_prefix("", move |_, _| SendResponseArc(response.clone()));
 
     spawn(move || server::start(Config {
         addr: "0.0.0.0:7013",
         connection_handler_threads: 5,
         tls_config: None,
-        router
+        router,
     }).unwrap());
 
     sleep(Duration::from_millis(50));
