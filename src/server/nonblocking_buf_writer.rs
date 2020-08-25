@@ -78,3 +78,39 @@ fn write_until_blocked<W: Write>(writer: &mut W, buf: &[u8]) -> Result<usize> {
     }
     Ok(pos)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::util::mock::MockWriter;
+    use crate::server::nonblocking_buf_writer::NonBlockingBufWriter;
+    use std::io::Write;
+    use std::ops::Deref;
+
+    #[test]
+    fn writes_and_flushes_with_no_blocking() {
+        let writer = MockWriter::new();
+        let written = writer.written.clone();
+        let flushed = writer.flushed.clone();
+
+        let mut writer = NonBlockingBufWriter::with_capacity(16, writer);
+
+        writer.write(b"hello 1").unwrap();
+        writer.write(b"hello 2").unwrap();
+
+        assert!(written.borrow().deref().is_empty());
+
+        writer.write(b"hello 3").unwrap();
+
+        assert_eq!(written.borrow().deref(), &vec![b"hello 1hello 2".to_vec()]);
+
+        writer.write(b"this is big and wont fit in the buffer").unwrap();
+
+        assert_eq!(written.borrow().deref(), &vec![b"hello 1hello 2".to_vec(), b"hello 3".to_vec(), b"this is big and wont fit in the buffer".to_vec()]);
+
+        writer.flush().unwrap();
+
+        assert_eq!(flushed.borrow().deref(), &vec![b"hello 1hello 2".to_vec(), b"hello 3".to_vec(), b"this is big and wont fit in the buffer".to_vec()]);
+
+
+    }
+}
