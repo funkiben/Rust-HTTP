@@ -1,8 +1,8 @@
 use std::io::{BufRead, ErrorKind, Read};
 
-/// Provides a method like take, but instead throws an error when the limit is reached.
+/// Provides a method like .take(), but instead throws an error when the limit is reached.
 pub trait ReadExt<T> {
-    /// Like take, but will return an error as soon as the read limit if reached.
+    /// Like .take(), but will return an error as soon as the read limit if reached.
     fn error_take(self, limit: u64) -> ErrorTake<T>;
 }
 

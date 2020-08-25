@@ -8,6 +8,7 @@ use crate::parse::error_take::ReadExt;
 use crate::parse::parse::{Parse, ParseResult};
 use crate::parse::parse::ParseStatus::{Done, IoErr};
 
+/// Max size in bytes for headers.
 const MAX_HEADERS_SIZE: usize = 4096;
 
 /// Parser for headers.
