@@ -15,8 +15,9 @@ use my_http::common::response::Response;
 use my_http::common::status;
 use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::SendResponse;
-use util::curl;
-use util::test_server;
+
+use crate::util::curl;
+use crate::util::test_server::test_server_with_curl;
 
 mod util;
 
@@ -87,7 +88,7 @@ fn curl_multiple_requests_same_connection() {
 
 #[test]
 fn curl_multiple_concurrent_connections_with_many_requests() {
-    test_server::test_server_with_curl(
+    test_server_with_curl(
         Config {
             addr: "0.0.0.0:8002",
             connection_handler_threads: 5,
@@ -116,7 +117,7 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
 
 #[test]
 fn curl_multiple_concurrent_connections_with_single_requests() {
-    test_server::test_server_with_curl(
+    test_server_with_curl(
         Config {
             addr: "0.0.0.0:8005",
             connection_handler_threads: 5,
@@ -183,27 +184,27 @@ fn normal_http_message() {
 fn curl_many_big_responses_through_concurrent_connections() {
     let file_data = fs::read("./tests/files/big_image.jpg").unwrap();
 
-    test_server::test_server_with_curl(
+    test_server_with_curl(
         Config {
             addr: "0.0.0.0:8006",
             connection_handler_threads: 5,
             tls_config: Some(get_tsl_config()),
             router: Router::new(),
         },
-        5,
+        10,
         vec![(
-            Request {
-                uri: "/".to_string(),
-                method: Method::GET,
-                headers: Default::default(),
-                body: vec![],
-            },
-            Response {
-                status: status::OK,
-                headers: header_map![(CONTENT_LENGTH, file_data.len().to_string())],
-                body: file_data,
-            }
-        ); 5],
+                 Request {
+                     uri: "/".to_string(),
+                     method: Method::GET,
+                     headers: Default::default(),
+                     body: vec![],
+                 },
+                 Response {
+                     status: status::OK,
+                     headers: header_map![(CONTENT_LENGTH, file_data.len().to_string())],
+                     body: file_data,
+                 }
+             ); 3],
         true)
 }
 

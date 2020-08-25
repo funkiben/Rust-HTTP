@@ -7,24 +7,12 @@ pub struct NonBlockingBufWriter<T> {
     buf: Vec<u8>,
     pos: usize,
     inner: T,
-    inner_needs_flush: bool,
 }
 
 impl<T: Write> NonBlockingBufWriter<T> {
     /// Creates a new writer with a buffer that has the given capacity.
     pub fn with_capacity(capacity: usize, inner: T) -> NonBlockingBufWriter<T> {
-        NonBlockingBufWriter { pos: 0, buf: Vec::with_capacity(capacity), inner, inner_needs_flush: false }
-    }
-
-    /// Checks if the given writer has unflushed data. flush() should be called when the underlying
-    /// writer is writeable until this returns false.
-    pub fn needs_flush(&self) -> bool {
-        self.pos > 0 || self.inner_needs_flush
-    }
-
-    /// Gets a reference to the underlying writer.
-    pub fn inner_ref(&self) -> &T {
-        &self.inner
+        NonBlockingBufWriter { pos: 0, buf: Vec::with_capacity(capacity), inner }
     }
 
     /// Gets a mutable reference to the underlying writer.
@@ -39,7 +27,7 @@ impl<T: Write> NonBlockingBufWriter<T> {
 
         self.pos += amount;
 
-        if self.pos == self.buf.len() {
+        if self.pos >= self.buf.len() {
             self.pos = 0;
             self.buf.clear();
         }
@@ -47,19 +35,12 @@ impl<T: Write> NonBlockingBufWriter<T> {
         Ok(())
     }
 
-    /// Flushes the underlying writer. If the underlying buffer blocks when flushed, then
-    /// inner_needs_flush is set to true.
+    /// Flushes the underlying writer. If the underlying buffer blocks when flushed, then Ok is
+    /// still returned.
     fn flush_inner(&mut self) -> Result<()> {
         match self.inner.flush() {
-            Ok(()) => {
-                self.inner_needs_flush = false;
-                Ok(())
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                self.inner_needs_flush = true;
-                Ok(())
-            }
-            Err(error) => Err(error)
+            Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(()),
+            x => x
         }
     }
 }

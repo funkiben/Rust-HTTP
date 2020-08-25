@@ -62,11 +62,6 @@ impl<S: BufRead + Write> Connection<S> {
             Err(res) => Error(ParseErr(res))
         }
     }
-
-    /// Gets a reference to the underlying stream.
-    pub fn stream_ref(&self) -> &S {
-        &self.stream
-    }
 }
 
 impl<S: BufRead + Write> Write for Connection<S> {

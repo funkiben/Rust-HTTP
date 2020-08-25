@@ -10,11 +10,6 @@ impl<T: Read + Write> BufStream<T> {
     pub fn with_capacities(inner: T, read_buffer_capacity: usize, write_buffer_capacity: usize) -> BufStream<T> {
         BufStream(BufReader::with_capacity(read_buffer_capacity, NonBlockingBufWriter::with_capacity(write_buffer_capacity, inner)))
     }
-
-    /// Gets a reference to the inner stream.
-    pub fn inner_ref(&self) -> &T {
-        self.0.get_ref().inner_ref()
-    }
 }
 
 impl<T: Read + Write> Read for BufStream<T> {
@@ -55,11 +50,16 @@ mod test {
 
     use crate::server::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
+    use std::ops::Deref;
 
     #[test]
     fn test_buf_read_and_write() -> std::io::Result<()> {
         let reader = MockReader::from_strs(vec!["hello", "\nworld", "!"]);
         let writer = MockWriter::new();
+
+        let written = writer.written.clone();
+        let flushed = writer.flushed.clone();
+
         let mut stream = BufStream::with_capacities(MockStream::new(reader, writer), 1024, 1024);
 
         let mut buf = String::new();
@@ -78,11 +78,11 @@ mod test {
         stream.write(b" ")?;
         stream.write(b"goodbye")?;
 
-        assert!(stream.inner_ref().writer.written.is_empty());
+        assert!(written.borrow().is_empty());
 
         stream.flush()?;
 
-        assert_eq!(stream.inner_ref().writer.flushed, vec![b"hello goodbye".to_vec()]);
+        assert_eq!(flushed.borrow().deref(), &vec![b"hello goodbye".to_vec()]);
 
         Ok(())
     }

@@ -162,6 +162,7 @@ mod tests {
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader::from_strs(input);
         let writer = MockWriter::new();
+        let flushed = writer.flushed.clone();
         let stream = MockStream::new(reader, writer);
 
         let mut router = Router::new();
@@ -179,7 +180,7 @@ mod tests {
 
         respond_to_requests(&mut connection, &router);
 
-        let actual_output = connection.stream_ref().inner_ref().writer.flushed.concat();
+        let actual_output = flushed.borrow().concat();
         let actual_output = String::from_utf8(actual_output).unwrap();
 
         assert_eq!(expected_output, actual_output);
@@ -655,7 +656,7 @@ mod tests {
 
         write_response(&mut writer, &response).unwrap();
 
-        let bytes = writer.flushed.concat();
+        let bytes = writer.flushed.borrow().concat();
         let response_bytes_as_string = String::from_utf8_lossy(&bytes);
 
         assert!(

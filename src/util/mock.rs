@@ -1,5 +1,8 @@
 use std::cmp::min;
 use std::io::{Error, ErrorKind, Read, Write};
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::ops::DerefMut;
 
 pub struct MockReader {
     pub return_would_block_when_empty: bool,
@@ -72,24 +75,24 @@ impl Read for EndlessMockReader {
 }
 
 pub struct MockWriter {
-    pub written: Vec<Vec<u8>>,
-    pub flushed: Vec<Vec<u8>>,
+    pub written: Rc<RefCell<Vec<Vec<u8>>>>,
+    pub flushed: Rc<RefCell<Vec<Vec<u8>>>>,
 }
 
 impl MockWriter {
     pub fn new() -> MockWriter {
-        MockWriter { written: vec![], flushed: vec![] }
+        MockWriter { written: Rc::new(RefCell::new(vec![])), flushed: Rc::new(RefCell::new(vec![])) }
     }
 }
 
 impl Write for MockWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.written.push(Vec::from(buf));
+        self.written.borrow_mut().push(Vec::from(buf));
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.flushed.append(&mut self.written);
+        self.flushed.borrow_mut().append(self.written.borrow_mut().deref_mut());
         Ok(())
     }
 }
