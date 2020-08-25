@@ -100,7 +100,7 @@ impl Connection {
     /// If the existing connection cannot be written to, then a new connection is opened.
     fn try_write(&mut self, request: &Request) -> Result<(), Error> {
         self.ensure_connected()?;
-        if let Ok(_) = write_request(self.writer.as_mut().unwrap(), request) {
+        if write_request(self.writer.as_mut().unwrap(), request).is_ok() {
             Ok(())
         } else {
             self.connect()?;
@@ -110,7 +110,7 @@ impl Connection {
 
     /// Connects to the server if not already connected.
     fn ensure_connected(&mut self) -> Result<(), Error> {
-        if let None = self.reader {
+        if self.reader.is_none() {
             self.connect()?
         }
         Ok(())

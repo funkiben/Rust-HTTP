@@ -13,7 +13,7 @@ mod crlf_line;
 mod headers;
 /// Parser for message bodies.
 mod body;
-/// Deframing (or, in other words, stateful IO reading)
+/// Deframing components (or, in other words, stateful IO reading).
 mod deframe;
 /// error_take method utility.
 mod error_take;

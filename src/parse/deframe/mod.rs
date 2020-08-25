@@ -1,4 +1,6 @@
+/// General deframe components.
 pub mod deframe;
+/// Deframer for a '\n' terminated String.
 pub mod line;
-pub mod bytes_until_eof;
+/// Deframers for bytes.
 pub mod bytes;
