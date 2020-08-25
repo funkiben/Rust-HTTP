@@ -35,15 +35,15 @@ pub fn start(config: Config) -> std::io::Result<()> {
     let config = Arc::new(config);
 
     if let Some(tls_config) = &config.tls_config {
-        listen_with(&config, |stream| TlsStream::new(ServerSession::new(tls_config), stream))
+        listen_abstract(&config, |stream| TlsStream::new(ServerSession::new(tls_config), stream))
     } else {
-        listen_with(&config, |stream| stream)
+        listen_abstract(&config, |stream| stream)
     }
 }
 
 /// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
 /// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
-fn listen_with<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
+fn listen_abstract<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
     let addr = config.addr.parse().expect("Invalid socket address");
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
 

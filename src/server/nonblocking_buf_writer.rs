@@ -98,7 +98,7 @@ mod tests {
         writer.write(b"hello 1").unwrap();
         writer.write(b"hello 2").unwrap();
 
-        assert!(written.borrow().deref().is_empty());
+        assert!(written.borrow().is_empty());
 
         writer.write(b"hello 3").unwrap();
 
