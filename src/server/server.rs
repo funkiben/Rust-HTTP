@@ -1,107 +1,107 @@
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::io::{BufRead, Read, Write};
+use std::sync::{Arc, Mutex};
 
-use rustls::{ServerConfig, ServerSession};
+use mio::net::TcpStream;
+use rustls::ServerSession;
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
-use crate::parse::error::ParsingError;
-use crate::parse::error::RequestParsingError;
-use crate::parse::read_request;
+use crate::server::buf_stream::BufStream;
 use crate::server::config::Config;
+use crate::server::connection::{Connection, ReadRequestError};
+use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
+use crate::server::poll::listen;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
 use crate::util::thread_pool::ThreadPool;
 use crate::util::tls_stream::TlsStream;
 
+/// Raw bytes for a request parsing error response.
 const REQUEST_PARSING_ERROR_RESPONSE: &[u8; 28] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
+
+/// Raw bytes for a 404 not found response.
 const NOT_FOUND_RESPONSE: &[u8; 26] = b"HTTP/1.1 404 Not Found\r\n\r\n";
 
-const BUF_WRITER_CAPACITY: usize = 1024;
+/// Size of connection read buffers.
+const READ_BUF_SIZE: usize = 4096;
 
-/// An HTTP server.
-pub struct Server {
-    /// The config for the server.
-    pub config: Config,
-    /// The router used for handling requests received from connections
-    pub router: Router,
-    /// The TLS config as an arc.
-    tls_config: Option<Arc<ServerConfig>>,
+/// Size of connection write buffers.
+const WRITE_BUF_SIZE: usize = 4096;
+
+/// Starts the HTTP server. This function will block and listen for new connections.
+pub fn start(config: Config) -> std::io::Result<()> {
+    let config = Arc::new(config);
+
+    if let Some(tls_config) = &config.tls_config {
+        listen_abstract(&config, |stream| TlsStream::new(ServerSession::new(tls_config), stream))
+    } else {
+        listen_abstract(&config, |stream| stream)
+    }
 }
 
-impl Server {
-    /// Creates a new HTTP server with the given config.
-    pub fn new(config: Config) -> Server {
-        Server {
-            config,
-            router: Router::new(),
-            tls_config: None,
+/// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
+/// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
+fn listen_abstract<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
+    let addr = config.addr.parse().expect("Invalid socket address");
+    let thread_pool = ThreadPool::new(config.connection_handler_threads);
+
+    listen(addr,
+           |socket, addr| {
+               let stream = on_new_connection(socket);
+               let connection = Connection::new(addr, BufStream::with_capacities(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
+               Arc::new(Mutex::new(Some(connection)))
+           },
+           |connection| {
+               let connection = connection.clone();
+               let config = config.clone();
+               thread_pool.execute(move || handle_read_ready_connection(config, connection));
+           },
+           |connection| {
+               let connection = connection.clone();
+               thread_pool.execute(move || handle_write_ready_connection(connection));
+           })
+}
+
+/// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
+fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
+    let mut lock = connection.lock().unwrap();
+
+    if let Some(mut connection) = lock.take() {
+        let should_close = respond_to_requests(&mut connection, &config.router);
+        if !should_close {
+            lock.replace(connection);
         }
     }
+}
 
-    /// Starts the HTTP server. This function will block and listen for new connections.
-    pub fn start(mut self) -> std::io::Result<()> {
-        let listener = TcpListener::bind(self.config.addr)?;
+/// Tries to flush the connection. If the connection can't be flushed, then it's dropped.
+fn handle_write_ready_connection<T: BufRead + Write>(connection: Arc<Mutex<Option<Connection<T>>>>) {
+    let mut lock = connection.lock().unwrap();
 
-        let thread_pool = ThreadPool::new(self.config.connection_handler_threads);
+    if let Some(mut connection) = lock.take() {
+        if connection.flush().is_ok() {
+            lock.replace(connection);
+        }
+    }
+}
 
-        self.tls_config = self.config.tls_config.take().map(|cfg| Arc::new(cfg));
-
-        let server = Arc::new(self);
-
-        for stream in listener.incoming() {
-            match stream {
-                Err(error) => println!("Error unwrapping new connection: {}", error),
-                Ok(stream) => {
-                    let server = Arc::clone(&server);
-                    thread_pool.execute(move || server.handle_connection(stream))
-                }
+/// Responds to requests in the given connection using the given router. Returns true if the connection should be dropped.
+fn respond_to_requests<T: BufRead + Write>(connection: &mut Connection<T>, router: &Router) -> bool {
+    loop {
+        match connection.read_request() {
+            Ready(request) => {
+                let write_result = write_response_from_router(connection, router, &request);
+                if write_result.is_err() || should_close_after_response(&request) { return true; }
+            }
+            NotReady => return false,
+            Closed => return true,
+            Error(error) => {
+                write_error_response(connection, error).unwrap_or_default();
+                return true;
             }
         }
-
-        Ok(())
-    }
-
-    /// Handles a new connection.
-    fn handle_connection(&self, stream: TcpStream) {
-        stream.set_read_timeout(Some(self.config.read_timeout)).unwrap();
-
-        if let Some(ref tls_config) = self.tls_config {
-            self.handle_tls_connection(tls_config, stream);
-        } else {
-            self.handle_plaintext_connection(stream);
-        }
-    }
-
-    /// Handles a new connection using plaintext.
-    fn handle_plaintext_connection(&self, stream: TcpStream) {
-        respond_to_requests(&stream, &stream, &self.router);
-    }
-
-    /// Handles a new connection using TLS.
-    fn handle_tls_connection(&self, tls_config: &Arc<ServerConfig>, stream: TcpStream) {
-        let stream = TlsStream::new(stream, ServerSession::new(tls_config));
-        respond_to_requests(&stream, &stream, &self.router);
-    }
-}
-
-/// Uses the given router to respond to requests read from reader. Writes responses to writer.
-/// If the router has no route for a request, then a 404 response with no body is returned.
-/// Will return as soon as the connection is closed or an invalid HTTP request is sent.
-fn respond_to_requests<R: Read, W: Write>(reader: R, writer: W, router: &Router) {
-    let mut writer = BufWriter::with_capacity(BUF_WRITER_CAPACITY, writer);
-
-    let result = read_requests(reader, |request| {
-        let write_result = write_response_from_router(&mut writer, router, &request);
-        should_close_after_response(&request) || write_result.is_err()
-    });
-
-    if let Err(error) = result {
-        // we dont really care if the response to an invalid request can't be written
-        write_error_response(&mut writer, error).unwrap_or(());
     }
 }
 
@@ -115,7 +115,7 @@ fn write_response_from_router(writer: &mut impl Write, router: &Router, request:
 }
 
 /// Writes a response to the given request parsing error.
-fn write_error_response(writer: &mut impl Write, error: RequestParsingError) -> std::io::Result<()> {
+fn write_error_response(writer: &mut impl Write, error: ReadRequestError) -> std::io::Result<()> {
     println!("Error: {:?}", error);
     writer.write_all(REQUEST_PARSING_ERROR_RESPONSE)?;
     writer.flush()
@@ -126,46 +126,17 @@ fn should_close_after_response(request: &Request) -> bool {
     request.headers.contains_header_value(&CONNECTION, "close")
 }
 
-/// Reads requests from the given reader until there is an invalid request or the connection is closed.
-/// Calls "on_request" for each request read.
-/// If "on_request" returns true, the function will return with Ok and stop reading future requests.
-fn read_requests<R: Read>(reader: R, mut on_request: impl FnMut(Request) -> bool) -> Result<(), RequestParsingError> {
-    let mut reader = BufReader::new(reader);
-    loop {
-        let request = read_request(&mut reader);
-
-        match request {
-            Ok(request) => if on_request(request) { return Ok(()); },
-            Err(RequestParsingError::Base(ParsingError::EOF)) => return Ok(()),
-            Err(RequestParsingError::Base(ParsingError::Reading(ref error))) if is_io_error_ok(error) => return Ok(()),
-            err => return err.map(|_| {})
-        }
-    }
-}
-
-/// Checks if the given IO error is OK.
-fn is_io_error_ok(error: &Error) -> bool {
-    // WouldBlock and TimedOut are for read timeouts. Linux uses WouldBlock, Windows uses TimedOut.
-    error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut
-        // ConnectionAborted is caused from https streams that have closed
-        || error.kind() == ErrorKind::ConnectionAborted
-}
-
 /// Writes the response as bytes to the given writer.
 pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
-    // TODO avoid calling write so many times
-    // use buf writer or no??
     // write! will call write multiple times and does not flush
-    // TODO avoid calling write so many times
-    // use buf writer or no??
     write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
         for value in values {
             write!(writer, "{}: {}\r\n", header, value)?;
         }
     }
-    writer.write_all(b"\r\n")?;
-    writer.write_all(&response.body)?;
+    writer.write(b"\r\n")?;
+    writer.write(&response.body)?;
     writer.flush()?;
     Ok(())
 }
@@ -181,15 +152,18 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status;
     use crate::common::status::Status;
+    use crate::server::buf_stream::BufStream;
+    use crate::server::connection::Connection;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
     use crate::server::server::{respond_to_requests, write_response};
-    use crate::util::mock::{MockReader, MockWriter};
+    use crate::util::mock::{MockReader, MockStream, MockWriter};
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
-        let reader = MockReader::new(input);
-
-        let mut writer = MockWriter::new();
+        let reader = MockReader::from_strs(input);
+        let writer = MockWriter::new();
+        let flushed = writer.flushed.clone();
+        let stream = MockStream::new(reader, writer);
 
         let mut router = Router::new();
 
@@ -202,10 +176,12 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        respond_to_requests(reader, &mut writer, &router);
+        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::with_capacities(stream, 64, 64));
 
-        let actual_output = writer.flushed.concat();
-        let actual_output = String::from_utf8_lossy(&actual_output);
+        respond_to_requests(&mut connection, &router);
+
+        let actual_output = flushed.borrow().concat();
+        let actual_output = String::from_utf8(actual_output).unwrap();
 
         assert_eq!(expected_output, actual_output);
         assert_eq!(expected_requests, actual_requests.lock().unwrap().to_vec());
@@ -680,7 +656,7 @@ mod tests {
 
         write_response(&mut writer, &response).unwrap();
 
-        let bytes = writer.flushed.concat();
+        let bytes = writer.flushed.borrow().concat();
         let response_bytes_as_string = String::from_utf8_lossy(&bytes);
 
         assert!(

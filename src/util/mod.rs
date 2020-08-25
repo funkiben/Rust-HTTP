@@ -5,5 +5,5 @@ pub mod thread_pool;
 #[cfg(test)]
 pub mod mock;
 
-/// Stream using TLS.
+/// Stream that automatically handles TLS.
 pub mod tls_stream;

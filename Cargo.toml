@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 rustls = "0.18.0"
 log = "0.4.11"
+mio = { version = "0.7.0", features = ["os-poll", "tcp"] }

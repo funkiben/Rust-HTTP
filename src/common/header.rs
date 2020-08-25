@@ -11,6 +11,15 @@ pub enum Header {
     Custom(String),
 }
 
+impl Header {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Header::Standard(str) => str,
+            Header::Custom(str) => str.as_str()
+        }
+    }
+}
+
 impl Display for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -32,10 +41,11 @@ macro_rules! standard_headers {
             pub const $name: Header = Header::Standard($value);
         )+
 
-        impl From<&str> for Header {
+
+        impl From<String> for Header {
             /// Gets a header from the given string representing the header name.
-            fn from(value: &str) -> Header {
-                let value = value.to_lowercase();
+            fn from(mut value: String) -> Header {
+                value.make_ascii_lowercase();
                 match value.as_str() {
                     $(
                     $value => $name,
@@ -46,6 +56,14 @@ macro_rules! standard_headers {
         }
     }
 }
+
+impl From<&str> for Header {
+    /// Gets a header from the given string representing the header name.
+    fn from(value: &str) -> Header {
+        Header::from(value.to_string())
+    }
+}
+
 
 standard_headers! {
     (ACCEPT, "accept");
@@ -285,5 +303,21 @@ mod tests {
         assert_eq!(headers.get_first_header_value(&CONTENT_LENGTH).unwrap(), "5");
         assert_eq!(headers.get_first_header_value(&CONTENT_TYPE).unwrap(), "something");
         assert_eq!(headers.get_first_header_value(&TRANSFER_ENCODING).unwrap(), "chunked");
+    }
+
+    #[test]
+    fn from_str() {
+        assert_eq!(Header::from("hello"), Header::Custom("hello".to_string()));
+        assert_eq!(Header::from("HeLlO"), Header::Custom("hello".to_string()));
+        assert_eq!(Header::from("content-length"), CONTENT_LENGTH);
+        assert_eq!(Header::from("ContenT-leNgth"), CONTENT_LENGTH);
+    }
+
+    #[test]
+    fn from_string() {
+        assert_eq!(Header::from("hello".to_string()), Header::Custom("hello".to_string()));
+        assert_eq!(Header::from("HeLlO".to_string()), Header::Custom("hello".to_string()));
+        assert_eq!(Header::from("content-length".to_string()), CONTENT_LENGTH);
+        assert_eq!(Header::from("ContenT-leNgth".to_string()), CONTENT_LENGTH);
     }
 }

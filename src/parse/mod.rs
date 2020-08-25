@@ -1,14 +1,25 @@
-pub use request::*;
-pub use response::*;
-
 /// Parsing errors.
 pub mod error;
-/// Common components used for parsing both requests and responses.
-mod common;
-/// Request parsing.
-mod request;
-/// Response parsing.
-mod response;
+/// Parse trait and other basic parsing types.
+pub mod parse;
+/// Request parsing components.
+pub mod request;
+/// Response parsing components.
+pub mod response;
 
-/// Utility for limiting the number of bytes that can be read from a reader.
+/// Parser for CRLF lines.
+mod crlf_line;
+/// Parser for headers.
+mod headers;
+/// Parser for message bodies.
+mod body;
+/// Deframing components (or, in other words, stateful IO reading).
+mod deframe;
+/// error_take method utility.
 mod error_take;
+/// Generic parser for HTTP messages. (Request and response parsers compose over this)
+mod message;
+
+/// Utility for testing parsers.
+#[cfg(test)]
+mod test_util;

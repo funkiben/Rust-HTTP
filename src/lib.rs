@@ -4,8 +4,9 @@ pub mod common;
 pub mod server;
 /// Components for communicating with an HTTP server.
 pub mod client;
-/// Components for parsing HTTP requests and responses.
-pub(crate) mod parse;
 
 /// Utility components.
 pub(crate) mod util;
+
+/// Components for parsing HTTP requests and responses.
+pub(crate) mod parse;

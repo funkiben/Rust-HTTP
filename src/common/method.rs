@@ -19,6 +19,7 @@ impl Display for Method {
     }
 }
 
+// TODO macros
 impl Method {
     /// Converts the given string to a method. Methods are case sensitive. Returns None if no Method matches.
     pub fn try_from_str(s: &str) -> Option<Method> {
@@ -27,6 +28,17 @@ impl Method {
             "POST" => Some(Method::POST),
             "DELETE" => Some(Method::DELETE),
             "PUT" => Some(Method::PUT),
+            _ => None
+        }
+    }
+
+    /// Converts the given string to a method. Methods are case sensitive. Returns None if no Method matches.
+    pub fn try_from_bytes(s: &[u8]) -> Option<Method> {
+        match s {
+            b"GET" => Some(Method::GET),
+            b"POST" => Some(Method::POST),
+            b"DELETE" => Some(Method::DELETE),
+            b"PUT" => Some(Method::PUT),
             _ => None
         }
     }

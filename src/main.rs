@@ -2,24 +2,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
+use my_http::{header_map, server};
 use my_http::common::{header, status};
 use my_http::common::response::Response;
-use my_http::header_map;
-use my_http::server::{Config, Server};
+use my_http::server::{Config, Router};
 use my_http::server::ListenerResult::{SendResponse, SendResponseArc};
-use my_http::server::Router;
 
 fn main() -> Result<(), Error> {
-    let mut server = Server::new(Config {
-        addr: "0.0.0.0:80",
-        connection_handler_threads: 5,
-        read_timeout: Duration::from_millis(1000),
-        tls_config: None,
-    });
+    let mut router = Router::new();
 
-    server.router.on("/secret/message/path", |_, _| {
+    router.on("/secret/message/path", |_, _| {
         let message = b"You found the secret message!";
         SendResponse(Response {
             status: status::OK,
@@ -28,10 +21,15 @@ fn main() -> Result<(), Error> {
         })
     });
 
-    server.router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
-    server.router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
+    router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
+    router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
-    server.start()
+    server::start(Config {
+        addr: "0.0.0.0:80",
+        connection_handler_threads: 5,
+        tls_config: None,
+        router,
+    })
 }
 
 fn file_router(directory: &'static str) -> Router {
