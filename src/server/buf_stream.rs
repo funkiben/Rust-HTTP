@@ -47,10 +47,10 @@ impl<T: Read + Write> Read for NonBlockingBufWriter<T> {
 #[cfg(test)]
 mod test {
     use std::io::{BufRead, Write};
+    use std::ops::Deref;
 
     use crate::server::buf_stream::BufStream;
     use crate::util::mock::{MockReader, MockStream, MockWriter};
-    use std::ops::Deref;
 
     #[test]
     fn test_buf_read_and_write() -> std::io::Result<()> {

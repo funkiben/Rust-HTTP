@@ -1,8 +1,8 @@
 use std::io::BufRead;
 
-use crate::common::HTTP_VERSION;
 use crate::common::response::Response;
 use crate::common::status::Status;
+use crate::common::version;
 use crate::parse::crlf_line::CrlfLineParser;
 use crate::parse::error::ParsingError;
 use crate::parse::message::MessageParser;
@@ -54,8 +54,8 @@ fn parse_first_line(line: String) -> Result<Status, ParsingError> {
     let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
     let status_code = split.next().ok_or(ParsingError::BadSyntax)?;
 
-    if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
+    if !version::is_supported(http_version) {
+        return Err(ParsingError::InvalidHttpVersion.into());
     }
 
     parse_status(status_code)
@@ -74,7 +74,7 @@ mod tests {
     use crate::common::header::{CONTENT_LENGTH, Header, HeaderMap, HeaderMapOps};
     use crate::common::response::Response;
     use crate::common::status;
-    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, InvalidStatusCode, WrongHttpVersion};
+    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, InvalidHttpVersion, InvalidStatusCode};
     use crate::parse::response::ResponseParser;
     use crate::parse::test_util;
     use crate::parse::test_util::TestParseResult;
@@ -240,7 +240,7 @@ mod tests {
     fn gibberish_with_crlf() {
         test_with_eof(
             vec!["ergejrogi jerogij ewo\r\nrfgjwoefjwof9wef wfw\r\n\r\n"],
-            ParseErr(WrongHttpVersion),
+            ParseErr(InvalidHttpVersion),
         );
     }
 
@@ -248,7 +248,7 @@ mod tests {
     fn gibberish_with_crlfs_at_end() {
         test_with_eof(
             vec!["ergejrogi jerogij eworfgjwoefjwof9wef wfw\r\n\r\n"],
-            ParseErr(WrongHttpVersion),
+            ParseErr(InvalidHttpVersion),
         );
     }
 
@@ -272,7 +272,7 @@ mod tests {
     fn wrong_http_version() {
         test_with_eof(
             vec!["HTTP/2.0 404 Not Found\r\n\r\n"],
-            ParseErr(WrongHttpVersion),
+            ParseErr(InvalidHttpVersion),
         );
     }
 

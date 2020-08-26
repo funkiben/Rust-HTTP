@@ -4,7 +4,7 @@ pub enum ParsingError {
     /// Invalid syntax in the message.
     BadSyntax,
     /// Message has wrong HTTP version.
-    WrongHttpVersion,
+    InvalidHttpVersion,
     /// Header has invalid value.
     InvalidHeaderValue,
     /// Size of chunk in chunked transfer encoding can not be parsed as a number.

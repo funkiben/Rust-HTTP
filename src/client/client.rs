@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use crate::client::config::Config;
 use crate::client::RequestError::{Reading, Sending};
-use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
+use crate::common::version::HTTP_VERSION_1_1;
 use crate::parse::error::ParsingError;
 use crate::parse::parse::Parse;
 use crate::parse::parse::ParseStatus::{Done, IoErr};
@@ -130,7 +130,7 @@ impl Connection {
 
 /// Writes the given request to the given writer.
 pub fn write_request(writer: &mut impl Write, request: &Request) -> std::io::Result<()> {
-    write!(writer, "{} {} {}\r\n", request.method, request.uri, HTTP_VERSION)?;
+    write!(writer, "{} {} {}\r\n", request.method, request.uri, HTTP_VERSION_1_1)?;
     for (header, values) in request.headers.iter() {
         for value in values {
             write!(writer, "{}: {}\r\n", header, value)?;

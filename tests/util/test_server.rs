@@ -91,7 +91,7 @@ pub fn test_server_with_curl(config: Config, num_connections: usize, messages: V
 fn start_server(mut server_config: Config, messages: &Vec<(Request, Response)>) {
     server_config.router = get_router(messages);
 
-    spawn(|| server::start(server_config));
+    spawn(|| server::start(server_config).unwrap());
     sleep(Duration::from_millis(100));
 }
 

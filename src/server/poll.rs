@@ -21,8 +21,7 @@ const LISTENER_TOKEN: Token = Token(usize::MAX);
 /// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
 pub fn listen<T>(addr: SocketAddr,
                  on_new_connection: impl Fn(TcpStream, SocketAddr) -> T,
-                 on_readable_connection: impl Fn(&T),
-                 on_writeable_connection: impl Fn(&T)) -> std::io::Result<()> {
+                 on_io_ready: impl Fn(&T)) -> std::io::Result<()> {
     let mut listener = TcpListener::bind(addr)?;
 
     let poll = Poll::new()?;
@@ -43,9 +42,7 @@ pub fn listen<T>(addr: SocketAddr,
                     });
                 }
                 token if event.is_write_closed() => { connections.remove(token.0); }
-                token if event.is_readable() => { connections.get(token.0).map(&on_readable_connection); }
-                token if event.is_writable() => { connections.get(token.0).map(&on_writeable_connection); }
-                _ => {}
+                token => { connections.get(token.0).map(&on_io_ready); }
             },
     )
 }

@@ -1,8 +1,8 @@
 use std::io::BufRead;
 
-use crate::common::HTTP_VERSION;
 use crate::common::method::Method;
 use crate::common::request::Request;
+use crate::common::version;
 use crate::parse::crlf_line::CrlfLineParser;
 use crate::parse::error::ParsingError;
 use crate::parse::message::MessageParser;
@@ -60,8 +60,8 @@ fn parse_first_line(line: String) -> Result<(Method, String), ParsingError> {
     let uri = split.next().ok_or(ParsingError::BadSyntax)?;
     let http_version = split.next().ok_or(ParsingError::BadSyntax)?;
 
-    if !http_version.eq(HTTP_VERSION) {
-        return Err(ParsingError::WrongHttpVersion.into());
+    if !version::is_supported(http_version) {
+        return Err(ParsingError::InvalidHttpVersion.into());
     }
 
     Ok((parse_method(method_raw)?, uri.to_string()))
@@ -80,7 +80,7 @@ mod tests {
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
-    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, UnrecognizedMethod, WrongHttpVersion};
+    use crate::parse::error::ParsingError::{BadSyntax, InvalidHeaderValue, InvalidHttpVersion, UnrecognizedMethod};
     use crate::parse::parse::{Parse, ParseStatus};
     use crate::parse::request::RequestParser;
     use crate::parse::test_util;
@@ -357,10 +357,10 @@ mod tests {
     }
 
     #[test]
-    fn wrong_http_version() {
+    fn invalid_http_version() {
         test_with_eof(
-            vec!["GET / HTTP/1.0\r\n\r\n"],
-            ParseErr(WrongHttpVersion))
+            vec!["GET / HTTP/1.2\r\n\r\n"],
+            ParseErr(InvalidHttpVersion))
     }
 
     #[test]

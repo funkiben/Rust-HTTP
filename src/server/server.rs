@@ -5,9 +5,9 @@ use mio::net::TcpStream;
 use rustls::ServerSession;
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
-use crate::common::HTTP_VERSION;
 use crate::common::request::Request;
 use crate::common::response::Response;
+use crate::common::version::HTTP_VERSION_1_1;
 use crate::server::buf_stream::BufStream;
 use crate::server::config::Config;
 use crate::server::connection::{Connection, ReadRequestError};
@@ -56,32 +56,25 @@ fn listen_abstract<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_ne
            |connection| {
                let connection = connection.clone();
                let config = config.clone();
-               thread_pool.execute(move || handle_read_ready_connection(config, connection));
-           },
-           |connection| {
-               let connection = connection.clone();
-               thread_pool.execute(move || handle_write_ready_connection(connection));
+               thread_pool.execute(move || handle_io_ready_connection(config, connection));
            })
 }
 
 /// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
-fn handle_read_ready_connection<T: BufRead + Write>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
+fn handle_io_ready_connection<T: BufRead + Write>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
     let mut lock = connection.lock().unwrap();
 
     if let Some(mut connection) = lock.take() {
-        let should_close = respond_to_requests(&mut connection, &config.router);
-        if !should_close {
-            lock.replace(connection);
+        // first try to flush any existing unflushed data
+        if !connection.flush().is_ok() { // if we cant flush assume the connection is bad
+            return;
         }
-    }
-}
 
-/// Tries to flush the connection. If the connection can't be flushed, then it's dropped.
-fn handle_write_ready_connection<T: BufRead + Write>(connection: Arc<Mutex<Option<Connection<T>>>>) {
-    let mut lock = connection.lock().unwrap();
+        // try to read requests and write responses
+        let should_close = respond_to_requests(&mut connection, &config.router);
 
-    if let Some(mut connection) = lock.take() {
-        if connection.flush().is_ok() {
+        // put the connection back in the Option if we should keep it alive
+        if !should_close {
             lock.replace(connection);
         }
     }
@@ -129,7 +122,7 @@ fn should_close_after_response(request: &Request) -> bool {
 /// Writes the response as bytes to the given writer.
 pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::Result<()> {
     // write! will call write multiple times and does not flush
-    write!(writer, "{} {} {}\r\n", HTTP_VERSION, response.status.code, response.status.reason)?;
+    write!(writer, "{} {} {}\r\n", HTTP_VERSION_1_1, response.status.code, response.status.reason)?;
     for (header, values) in response.headers.iter() {
         for value in values {
             write!(writer, "{}: {}\r\n", header, value)?;
@@ -518,9 +511,9 @@ mod tests {
     }
 
     #[test]
-    fn wrong_http_version() {
+    fn invalid_http_version() {
         test_respond_to_requests_with_last_response(
-            vec!["GET / HTTP/1.0\r\n\r\n"],
+            vec!["GET / HTTP/1.2\r\n\r\n"],
             vec![],
             "HTTP/1.1 400 Bad Request\r\n\r\n")
     }

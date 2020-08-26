@@ -1,5 +1,3 @@
-pub const HTTP_VERSION: &str = "HTTP/1.1";
-
 /// HTTP header data types and functions.
 pub mod header;
 /// HTTP method data type and functions.
@@ -10,3 +8,5 @@ pub mod request;
 pub mod response;
 /// HTTP status data type and functions.
 pub mod status;
+/// HTTP version constants and functions.
+pub mod version;

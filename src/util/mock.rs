@@ -1,8 +1,8 @@
+use std::cell::RefCell;
 use std::cmp::min;
 use std::io::{Error, ErrorKind, Read, Write};
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::ops::DerefMut;
+use std::rc::Rc;
 
 pub struct MockReader {
     pub return_would_block_when_empty: bool,
