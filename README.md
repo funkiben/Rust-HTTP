@@ -2,7 +2,8 @@
 Minimal dependency HTTP/HTTPS library for Rust.
 
 ### Server Features
-- Asynchronous listening and reading of requests using Mio for IO polling.
+- Asynchronous listening and request reading using Mio for IO polling.
 - Multithreading support.
-- HTTPS enabled using Rustls for TLS. 
+- HTTPS support using Rustls for TLS. 
 - Basic routing API.
+- Supports HTTP/1.0 and HTTP/1.1.
