@@ -461,4 +461,25 @@ mod tests {
             (vec![b"hell\r\n"], ParseErr(BadSyntax)),
         ]);
     }
+
+    #[test]
+    fn zero_content_length_no_data() {
+        test_sized(0, vec![
+            (vec![], Value(vec![]))
+        ])
+    }
+
+    #[test]
+    fn zero_content_length_eof() {
+        test_sized(0, vec![
+            (vec![b""], Value(vec![]))
+        ])
+    }
+
+    #[test]
+    fn zero_content_length_with_data() {
+        test_sized(0, vec![
+            (vec![b"h", b"ell"], Value(vec![]))
+        ])
+    }
 }

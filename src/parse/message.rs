@@ -657,6 +657,17 @@ mod tests {
     }
 
     #[test]
+    fn zero_content_length() {
+        test_with_eof(
+            vec!["HTTP/1.1 200 OK\r\n",
+                 "content-length: 0\r\n",
+                 "\r\n"],
+            false,
+            Value(("HTTP/1.1 200 OK".to_string(), header_map![(CONTENT_LENGTH, "0")], vec![])),
+        );
+    }
+
+    #[test]
     fn endless_line() {
         test_endless(
             vec![],

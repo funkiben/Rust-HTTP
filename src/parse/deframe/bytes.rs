@@ -17,21 +17,19 @@ impl BytesDeframer {
 
 impl Deframe<Vec<u8>> for BytesDeframer {
     fn read(mut self, reader: &mut impl BufRead) -> DeframerResult<Vec<u8>, Self> {
-        loop {
-            let len = self.data.len();
-            let mut buf = &mut self.data[self.pos..len];
+        while self.pos < self.data.len() {
+            let mut buf = &mut self.data[self.pos..];
 
             match reader.read(&mut buf) {
                 Ok(0) if buf.len() != 0 => return Err((self, Error::from(ErrorKind::UnexpectedEof))),
                 Ok(amt) => {
                     self.pos += amt;
-                    if self.pos == len {
-                        return Ok(self.data);
-                    }
                 }
                 Err(err) => return Err((self, err.into()))
             }
         }
+
+        Ok(self.data)
     }
 
     fn read_so_far(&self) -> usize {
