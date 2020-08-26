@@ -659,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn response_no_header_or_body_to_bytes() {
+    fn write_response_no_header_or_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HashMap::new(),
@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn response_one_header_no_body_to_bytes() {
+    fn write_response_one_header_no_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HeaderMap::from_pairs(vec![
