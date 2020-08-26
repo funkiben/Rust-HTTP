@@ -119,17 +119,21 @@ fn large_connection_pool() {
 }
 
 #[test]
-#[ignore]
 fn many_websites_with_small_connection_pool() {
     test_connection_pool("northeastern.edu:80", 13, 50, status::MOVED_PERMANENTLY, false);
     test_connection_pool("reddit.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    // test_connection_pool("stackoverflow.com:80", 13, 50);
-    // test_connection_pool("facebook.com:80", 13, 50);
-    // test_connection_pool("instagram.com:80", 13, 50);
-    // test_connection_pool("twitter.com:80", 13, 50);
+    test_connection_pool("facebook.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_connection_pool("instagram.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_connection_pool("twitter.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_connection_pool("wikipedia.org:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_connection_pool("youtube.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    // test_connection_pool("amazon.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    // test_connection_pool("yahoo.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    // test_connection_pool("apple.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
 }
 
 fn test_connection_pool(addr: &'static str, num_connections: usize, requests: usize, expected_status: Status, should_have_body: bool) {
+    println!("sending requests to {}", addr);
     let client = Client::new(Config {
         addr,
         read_timeout: Duration::from_secs(5),

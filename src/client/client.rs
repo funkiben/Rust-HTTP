@@ -1,10 +1,10 @@
 use std::io::{BufReader, BufWriter, Error, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::client::config::Config;
-use crate::client::RequestError::{Reading, Sending};
+use crate::client::RequestError::{Connecting, Reading, Writing};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::version::HTTP_VERSION_1_1;
@@ -26,10 +26,12 @@ pub struct Client {
 pub enum RequestError {
     /// Error with parsing the response received from the server.
     ResponseParsing(ParsingError),
+    /// Error connecting to the server.
+    Connecting(Error),
     /// Error reading responses from server.
     Reading(Error),
     /// Error sending the request to the server.
-    Sending(Error),
+    Writing(Error),
 }
 
 impl From<ParsingError> for RequestError {
@@ -85,9 +87,27 @@ impl Connection {
     /// Sends a request to the server and returns the response.
     /// If the connection is not yet open, then a new connection will be opened.
     /// If the request cannot be written, then a new connection is opened and the request is retried once more.
+    /// If a request was written but a response can not be read, then a new connection is made and the request is retried once.
     fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
-        self.try_write(request).map_err(|err| Sending(err))?;
+        self.ensure_connected()?;
 
+        if self.write_request(request).is_err() {
+            self.connect()?;
+            self.write_request(request)?
+        }
+
+        match self.read_response() {
+            Ok(response) => Ok(response),
+            Err(_) => {
+                self.connect()?;
+                self.write_request(request)?;
+                self.read_response()
+            }
+        }
+    }
+
+    /// Attempts to read a response from the stream.
+    fn read_response(&mut self) -> Result<Response, RequestError> {
         let response_parser = ResponseParser::new();
         match response_parser.parse(self.reader.as_mut().unwrap())? {
             Done(response) => Ok(response),
@@ -95,37 +115,36 @@ impl Connection {
         }
     }
 
-    /// Tries to write the request to the server.
-    /// If an existing connection is open, then that connection will be written to, otherwise a new connection is opened.
-    /// If the existing connection cannot be written to, then a new connection is opened.
-    fn try_write(&mut self, request: &Request) -> Result<(), Error> {
-        self.ensure_connected()?;
-        if write_request(self.writer.as_mut().unwrap(), request).is_ok() {
-            Ok(())
-        } else {
-            self.connect()?;
-            write_request(self.writer.as_mut().unwrap(), request)
-        }
+    /// Attempts to write a request to the stream.
+    fn write_request(&mut self, request: &Request) -> Result<(), RequestError> {
+        write_request(self.writer.as_mut().unwrap(), request).map_err(|err| Writing(err))
     }
 
     /// Connects to the server if not already connected.
-    fn ensure_connected(&mut self) -> Result<(), Error> {
-        if self.reader.is_none() {
-            self.connect()?
+    fn ensure_connected(&mut self) -> Result<(), RequestError> {
+        if self.reader.is_none() || self.writer.is_none() {
+            self.connect()?;
         }
         Ok(())
     }
 
     /// Opens a new connection to the server.
-    fn connect(&mut self) -> Result<(), Error> {
-        let stream = TcpStream::connect(self.addr)?;
-        let stream_clone = stream.try_clone()?;
-        stream.set_read_timeout(Some(self.read_timeout)).unwrap();
-
-        self.reader = Some(BufReader::new(stream));
-        self.writer = Some(BufWriter::new(stream_clone));
+    fn connect(&mut self) -> Result<(), RequestError> {
+        let (reader, writer) =
+            connect(self.addr, self.read_timeout).map_err(|err| Connecting(err))?;
+        self.reader = Some(reader);
+        self.writer = Some(writer);
         Ok(())
     }
+}
+
+/// Opens a new connection to the specified address and returns a reader and writer for communication.
+fn connect<A: ToSocketAddrs>(addr: A, read_timeout: Duration) -> Result<(BufReader<TcpStream>, BufWriter<TcpStream>), Error> {
+    let stream = TcpStream::connect(addr)?;
+    let stream_clone = stream.try_clone()?;
+    stream.set_read_timeout(Some(read_timeout)).unwrap();
+
+    Ok((BufReader::new(stream), BufWriter::new(stream_clone)))
 }
 
 /// Writes the given request to the given writer.
