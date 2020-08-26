@@ -1,16 +1,16 @@
-use std::collections::LinkedList;
+use std::collections::VecDeque;
 
 /// A data structure with preallocated space for elements.
 /// The slab will find empty slots for new elements and return the index where it was inserted.
 pub struct Slab<T> {
     data: Vec<Option<T>>,
-    open_slots: LinkedList<usize>,
+    open_slots: VecDeque<usize>,
 }
 
 impl<T> Slab<T> {
     /// Creates a new slab with the given capacity. "capacity" specifies how many empty slots will be allocated.
     pub fn with_capacity(capacity: usize) -> Slab<T> {
-        Slab { data: Vec::with_capacity(capacity), open_slots: LinkedList::new() }
+        Slab { data: Vec::with_capacity(capacity), open_slots: VecDeque::with_capacity(capacity) }
     }
 
     /// Gets the key of the next element that will be inserted.
