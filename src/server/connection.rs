@@ -1,4 +1,4 @@
-use std::io::{BufRead, ErrorKind, Write};
+use std::io::{ErrorKind, Write};
 use std::net::SocketAddr;
 
 use crate::common::request::Request;
@@ -7,6 +7,7 @@ use crate::parse::parse::{Parse, ParseStatus};
 use crate::parse::request::RequestParser;
 use crate::server::connection::ReadRequestError::{IoErr, ParseErr};
 use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
+use crate::util::stream::BufStream;
 
 /// The result of attempting to read a request.
 pub enum ReadRequestResult {
@@ -30,14 +31,14 @@ pub enum ReadRequestError {
 }
 
 /// A connection to a client. The main purpose of this is to store the state of asynchronous IO.
-pub struct Connection<S: BufRead + Write> {
+pub struct Connection<S: BufStream> {
     /// The address of the client.
     pub addr: SocketAddr,
     stream: S,
     parser: Option<RequestParser>,
 }
 
-impl<S: BufRead + Write> Connection<S> {
+impl<S: BufStream> Connection<S> {
     /// Creates a new connection out of the given address and stream.
     pub fn new(addr: SocketAddr, stream: S) -> Connection<S> {
         Connection {
@@ -64,7 +65,7 @@ impl<S: BufRead + Write> Connection<S> {
     }
 }
 
-impl<S: BufRead + Write> Write for Connection<S> {
+impl<S: BufStream> Write for Connection<S> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.stream.write(buf)
     }
