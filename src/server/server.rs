@@ -1,4 +1,4 @@
-use std::io::{BufRead, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use mio::net::TcpStream;
@@ -8,13 +8,15 @@ use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::version::HTTP_VERSION_1_1;
-use crate::server::buf_stream::BufStream;
 use crate::server::config::Config;
 use crate::server::connection::{Connection, ReadRequestError};
 use crate::server::connection::ReadRequestResult::{Closed, Error, NotReady, Ready};
+use crate::server::nonblocking_buf_writer::NonBlockingBufWriter;
 use crate::server::poll::listen;
 use crate::server::router::ListenerResult::{Next, SendResponse, SendResponseArc};
 use crate::server::router::Router;
+use crate::util::stream;
+use crate::util::stream::{BufStream, Stream};
 use crate::util::thread_pool::ThreadPool;
 use crate::util::tls_stream::TlsStream;
 
@@ -43,14 +45,15 @@ pub fn start(config: Config) -> std::io::Result<()> {
 
 /// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
 /// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
-fn listen_abstract<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
+fn listen_abstract<T: Stream + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
     let addr = config.addr.parse().expect("Invalid socket address");
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
 
     listen(addr,
            |socket, addr| {
                let stream = on_new_connection(socket);
-               let connection = Connection::new(addr, BufStream::with_capacities(stream, READ_BUF_SIZE, WRITE_BUF_SIZE));
+               let stream = new_buffered_stream(stream);
+               let connection = Connection::new(addr, stream);
                Arc::new(Mutex::new(Some(connection)))
            },
            |connection| {
@@ -60,8 +63,21 @@ fn listen_abstract<T: Read + Write + Send + 'static>(config: &Arc<Config>, on_ne
            })
 }
 
+/// Wraps the stream with a buffered reader and writer.
+fn new_buffered_stream(stream: impl Stream + 'static) -> impl BufStream {
+    fn buf_reader<R: Read>(reader: R) -> BufReader<R> {
+        BufReader::with_capacity(READ_BUF_SIZE, reader)
+    }
+
+    fn buf_writer<W: Write>(writer: W) -> NonBlockingBufWriter<W> {
+        NonBlockingBufWriter::with_capacity(WRITE_BUF_SIZE, writer)
+    }
+
+    stream::with_buf_reader_and_writer(stream, buf_reader, buf_writer)
+}
+
 /// Tries reading requests and responding for the given connection. May drop the given connection if it should be closed.
-fn handle_io_ready_connection<T: BufRead + Write>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
+fn handle_io_ready_connection<T: BufStream>(config: Arc<Config>, connection: Arc<Mutex<Option<Connection<T>>>>) {
     let mut lock = connection.lock().unwrap();
 
     if let Some(mut connection) = lock.take() {
@@ -81,7 +97,7 @@ fn handle_io_ready_connection<T: BufRead + Write>(config: Arc<Config>, connectio
 }
 
 /// Responds to requests in the given connection using the given router. Returns true if the connection should be dropped.
-fn respond_to_requests<T: BufRead + Write>(connection: &mut Connection<T>, router: &Router) -> bool {
+fn respond_to_requests<T: BufStream>(connection: &mut Connection<T>, router: &Router) -> bool {
     loop {
         match connection.read_request() {
             Ready(request) => {
@@ -137,6 +153,7 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> std::io::
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::BufReader;
     use std::sync::{Arc, Mutex};
 
     use crate::common::header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, Header, HeaderMap, HeaderMapOps};
@@ -145,7 +162,6 @@ mod tests {
     use crate::common::response::Response;
     use crate::common::status;
     use crate::common::status::Status;
-    use crate::server::buf_stream::BufStream;
     use crate::server::connection::Connection;
     use crate::server::router::ListenerResult::SendResponse;
     use crate::server::router::Router;
@@ -154,6 +170,7 @@ mod tests {
 
     fn test_respond_to_requests(input: Vec<&str>, responses: Vec<Response>, expected_requests: Vec<Request>, expected_output: &str) {
         let reader = MockReader::from_strs(input);
+        let reader = BufReader::new(reader);
         let writer = MockWriter::new();
         let flushed = writer.flushed.clone();
         let stream = MockStream::new(reader, writer);
@@ -169,7 +186,7 @@ mod tests {
             SendResponse(responses.lock().unwrap().remove(0))
         });
 
-        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), BufStream::with_capacities(stream, 64, 64));
+        let mut connection = Connection::new("0.0.0.0:80".parse().unwrap(), stream);
 
         respond_to_requests(&mut connection, &router);
 
@@ -659,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn response_no_header_or_body_to_bytes() {
+    fn write_response_no_header_or_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HashMap::new(),
@@ -671,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn response_one_header_no_body_to_bytes() {
+    fn write_response_one_header_no_body_to_bytes() {
         let response = Response {
             status: status::OK,
             headers: HeaderMap::from_pairs(vec![

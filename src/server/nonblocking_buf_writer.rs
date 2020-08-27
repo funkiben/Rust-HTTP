@@ -1,5 +1,7 @@
 use std::io::{ErrorKind, Result, Write};
 
+use crate::util::stream::InnerMut;
+
 /// A buffered writer that handles WouldBlock errors.
 /// WouldBlock errors simply stop execution of either a flush or a write, and remaining unwritten
 /// data is stored in a buffer.
@@ -13,11 +15,6 @@ impl<T: Write> NonBlockingBufWriter<T> {
     /// Creates a new writer with a buffer that has the given capacity.
     pub fn with_capacity(capacity: usize, inner: T) -> NonBlockingBufWriter<T> {
         NonBlockingBufWriter { pos: 0, buf: Vec::with_capacity(capacity), inner }
-    }
-
-    /// Gets a mutable reference to the underlying writer.
-    pub fn inner_mut(&mut self) -> &mut T {
-        &mut self.inner
     }
 
     /// Writes the contents of the buffer to the underlying writer.
@@ -77,6 +74,14 @@ fn write_until_blocked<W: Write>(writer: &mut W, buf: &[u8]) -> Result<usize> {
         }
     }
     Ok(pos)
+}
+
+impl<W> InnerMut for NonBlockingBufWriter<W> {
+    type Inner = W;
+
+    fn inner_mut(&mut self) -> &mut Self::Inner {
+        &mut self.inner
+    }
 }
 
 #[cfg(test)]

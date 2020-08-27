@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::min;
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{BufRead, Error, ErrorKind, Read, Write};
 use std::ops::DerefMut;
 use std::rc::Rc;
 
@@ -111,6 +111,16 @@ impl<R, W> MockStream<R, W> {
 impl<R: Read, W> Read for MockStream<R, W> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.reader.read(buf)
+    }
+}
+
+impl<R: BufRead, W> BufRead for MockStream<R, W> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.reader.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.reader.consume(amt)
     }
 }
 
