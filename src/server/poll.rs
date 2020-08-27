@@ -16,9 +16,9 @@ const INITIAL_CONNECTION_CAPACITY: usize = 128;
 /// Token used for the listener.
 const LISTENER_TOKEN: Token = Token(usize::MAX);
 
-/// Listens asynchronously on the given address. Calls make_connection for each new stream, and
-/// calls on_readable_connection for each stream that is read ready.
-/// The result of make_connection will be passed to on_readable_connection when the corresponding stream is ready for reading.
+/// Listens asynchronously on the given address. Calls make_connection for each new stream, and calls
+/// on_io_ready for each stream that is IO ready.
+/// The result of on_new_connection will be passed to on_io_ready when the corresponding stream is ready for reading or writing.
 pub fn listen<T>(addr: SocketAddr,
                  on_new_connection: impl Fn(TcpStream, SocketAddr) -> T,
                  on_io_ready: impl Fn(&T)) -> std::io::Result<()> {
