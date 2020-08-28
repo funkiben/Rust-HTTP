@@ -2,7 +2,7 @@ use std::io::{BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use mio::net::TcpStream;
-use rustls::{ServerSession, ServerConfig};
+use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::request::Request;

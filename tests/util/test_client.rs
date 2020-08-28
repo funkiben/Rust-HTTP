@@ -1,10 +1,11 @@
-use my_http::client::{Client, StreamFactory};
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread::spawn;
+
+use my_http::client::{Client, StreamFactory};
+use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::status::Status;
-use my_http::common::method::Method;
-use std::io::{Read, Write};
 use my_http::header_map;
 
 pub fn test_empty_requests<S: Read + Write + Send + 'static, F: StreamFactory<S> + 'static>(client: Client<S, F>, requests: usize, expected_status: Status, should_have_body: bool) {

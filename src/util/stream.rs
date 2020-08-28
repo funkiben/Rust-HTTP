@@ -5,10 +5,12 @@ pub type StdBufStream<T> = ReadableWriter<BufWriter<WriteableReader<BufReader<T>
 
 /// A stream that can be read and written.
 pub trait Stream: Read + Write {}
+
 impl<T: Read + Write> Stream for T {}
 
 /// A stream that supports buffered reading operations.
 pub trait BufStream: BufRead + Write {}
+
 impl<T: BufRead + Write> BufStream for T {}
 
 /// Creates a new buffered stream by wrapping the given stream with a reader and writer.

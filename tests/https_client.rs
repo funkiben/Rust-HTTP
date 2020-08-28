@@ -6,8 +6,8 @@ use my_http::client::{Client, Config};
 use my_http::common::method::Method;
 use my_http::common::request::Request;
 use my_http::common::status;
-use my_http::header_map;
 use my_http::common::status::Status;
+use my_http::header_map;
 
 mod util;
 
