@@ -33,12 +33,11 @@ fn curl_request() {
         })
     });
 
-    spawn(|| server::start(Config {
+    spawn(|| server::listen_https(Config {
         addr: "0.0.0.0:8000",
         connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
         router,
-    }));
+    }, get_tsl_config()));
 
     sleep(Duration::from_millis(1000));
 
@@ -64,12 +63,11 @@ fn curl_multiple_requests_same_connection() {
         })
     });
 
-    spawn(|| server::start(Config {
+    spawn(|| server::listen_https(Config {
         addr: "0.0.0.0:8001",
         connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
         router,
-    }));
+    }, get_tsl_config()));
 
     sleep(Duration::from_millis(1000));
 
@@ -80,8 +78,7 @@ fn curl_multiple_requests_same_connection() {
             method: Method::GET,
             headers: header_map![],
             body: vec![],
-        }; 6],
-        true);
+        }; 6], true);
 
     assert_eq!("i worki worki worki worki worki work", output);
 }
@@ -92,9 +89,9 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
         Config {
             addr: "0.0.0.0:8002",
             connection_handler_threads: 5,
-            tls_config: Some(get_tsl_config()),
             router: Router::new(),
         },
+        Some(get_tsl_config()),
         50,
         vec![(
                  Request {
@@ -112,7 +109,7 @@ fn curl_multiple_concurrent_connections_with_many_requests() {
                      headers: header_map![(CONTENT_LENGTH, "6")],
                      body: "i work".as_bytes().to_vec(),
                  }
-             ); 10], true);
+             ); 10]);
 }
 
 #[test]
@@ -121,9 +118,9 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
         Config {
             addr: "0.0.0.0:8005",
             connection_handler_threads: 5,
-            tls_config: Some(get_tsl_config()),
             router: Router::new(),
         },
+        Some(get_tsl_config()),
         200,
         vec![(
             Request {
@@ -137,17 +134,16 @@ fn curl_multiple_concurrent_connections_with_single_requests() {
                 headers: header_map![(CONTENT_LENGTH, "6")],
                 body: "i work".as_bytes().to_vec(),
             }
-        )], true);
+        )]);
 }
 
 #[test]
 fn infinite_connection() {
-    spawn(|| server::start(Config {
+    spawn(|| server::listen_https(Config {
         addr: "0.0.0.0:8003",
         connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
         router: Router::new(),
-    }).unwrap());
+    }, get_tsl_config()).unwrap());
 
     sleep(Duration::from_millis(1000));
 
@@ -162,12 +158,11 @@ fn infinite_connection() {
 
 #[test]
 fn normal_http_message() {
-    spawn(|| server::start(Config {
+    spawn(|| server::listen_https(Config {
         addr: "0.0.0.0:8004",
         connection_handler_threads: 5,
-        tls_config: Some(get_tsl_config()),
         router: Router::new(),
-    }));
+    }, get_tsl_config()).unwrap());
 
     sleep(Duration::from_millis(1000));
 
@@ -188,9 +183,9 @@ fn curl_many_big_responses_through_concurrent_connections() {
         Config {
             addr: "0.0.0.0:8006",
             connection_handler_threads: 5,
-            tls_config: Some(get_tsl_config()),
             router: Router::new(),
         },
+        Some(get_tsl_config()),
         10,
         vec![(
                  Request {
@@ -204,11 +199,10 @@ fn curl_many_big_responses_through_concurrent_connections() {
                      headers: header_map![(CONTENT_LENGTH, file_data.len().to_string())],
                      body: file_data,
                  }
-             ); 3],
-        true)
+             ); 3])
 }
 
-fn get_tsl_config() -> Arc<ServerConfig> {
+fn get_tsl_config() -> ServerConfig {
     let mut config = ServerConfig::new(NoClientAuth::new());
 
     let certs = read_certs("./tests/certs/server.crt");
@@ -216,7 +210,7 @@ fn get_tsl_config() -> Arc<ServerConfig> {
 
     config.set_single_cert(certs, privkey).unwrap();
 
-    Arc::new(config)
+    config
 }
 
 fn read_certs(filename: &str) -> Vec<Certificate> {

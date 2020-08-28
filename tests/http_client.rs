@@ -135,7 +135,7 @@ fn many_websites_with_small_connection_pool() {
 fn test_empty_requests(addr: &'static str, num_connections: usize, requests: usize, expected_status: Status, should_have_body: bool) {
     let client = Client::new_http(Config {
         addr,
-        read_timeout: Duration::from_millis(1000),
+        read_timeout: Duration::from_millis(2000),
         num_connections,
     });
 
