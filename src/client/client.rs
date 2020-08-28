@@ -1,10 +1,13 @@
 use std::io::{BufReader, BufWriter, Error, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::Mutex;
-use std::time::Duration;
 
+use rustls::ClientConfig;
+
+use crate::client::client::RequestError::{Reading, Writing};
 use crate::client::config::Config;
-use crate::client::RequestError::{Connecting, Reading, Writing};
+use crate::client::RequestError::Connecting;
+use crate::client::stream_factory::{ClientTlsStream, StreamFactory, TcpStreamFactory, TlsStreamFactory};
 use crate::common::request::Request;
 use crate::common::response::Response;
 use crate::common::version::HTTP_VERSION_1_1;
@@ -12,14 +15,8 @@ use crate::parse::error::ParsingError;
 use crate::parse::parse::Parse;
 use crate::parse::parse::ParseStatus::{Done, IoErr};
 use crate::parse::response::ResponseParser;
-
-/// Client for making HTTP requests.
-pub struct Client {
-    /// The config the client uses.
-    pub config: Config,
-    /// The connections to the server.
-    connections: Vec<Mutex<Connection>>,
-}
+use crate::util::stream;
+use crate::util::stream::{BufStream, StdBufStream, Stream};
 
 /// Error when making an HTTP request.
 #[derive(Debug)]
@@ -40,19 +37,47 @@ impl From<ParsingError> for RequestError {
     }
 }
 
-impl Client {
-    /// Creates a new client with the given config. Will not actually connect to the server until a request is sent.
-    pub fn new(config: Config) -> Client {
+/// Client for making HTTP requests.
+pub struct Client<S: Stream, F> {
+    /// The config the client uses.
+    pub config: Config,
+    /// The connections to the server.
+    connections: Vec<Mutex<Connection<S>>>,
+    /// Factory for spawning new streams to the server.
+    stream_factory: F,
+}
+
+impl Client<TcpStream, TcpStreamFactory> {
+    /// Creates a new HTTP client.
+    pub fn new_http(config: Config) -> Client<TcpStream, TcpStreamFactory> {
+        let factory = TcpStreamFactory::new(&config);
+        Self::new(config, factory)
+    }
+}
+
+impl Client<ClientTlsStream, TlsStreamFactory> {
+    /// Creates a new HTTP client.
+    pub fn new_https(config: Config, tls_config: ClientConfig) -> Client<ClientTlsStream, TlsStreamFactory> {
+        let factory = TlsStreamFactory::new(&config, tls_config);
+        Self::new(config, factory)
+    }
+}
+
+impl<S: Stream + 'static, F: StreamFactory<S>> Client<S, F> {
+    /// Creates a new HTTP client with the given config. Will not actually connect to the server until a request is sent.
+    fn new(config: Config, stream_factory: F) -> Client<S, F> {
         assert!(config.num_connections > 0, "Number of connections must be positive");
 
         let mut connections = Vec::with_capacity(config.num_connections);
         for _ in 0..config.num_connections {
-            connections.push(Mutex::new(Connection::new(config.addr, config.read_timeout)))
+            connections.push(Mutex::new(Connection::new()))
         }
 
-        Client { connections, config }
+        Client { connections, config, stream_factory }
     }
+}
 
+impl<S: Stream + 'static, F: StreamFactory<S>> Client<S, F> {
     /// Finds an unused connection to the server and makes a request. The connection will be locked until this method returns.
     /// If all connections are in use then this method will block until a connection is free.
     /// Returns the returned response from the server or an error.
@@ -60,91 +85,59 @@ impl Client {
         loop {
             let mut free = self.connections.iter().filter_map(|conn| conn.try_lock().ok());
             if let Some(mut conn) = free.next() {
-                return conn.send(request);
+                return conn.send(&self.stream_factory, request);
             }
         }
     }
 }
 
-/// Connection to a server.
-struct Connection {
-    /// Address of the server.
-    addr: &'static str,
-    /// Read timeout for the connection.
-    read_timeout: Duration,
-    /// Reader for reading from the TCP stream.
-    reader: Option<BufReader<TcpStream>>,
-    /// Writer for writing to the TCP stream.
-    writer: Option<BufWriter<TcpStream>>,
+
+/// A single connection to the server. Holds the state of the stream to a server.
+struct Connection<S: Stream> {
+    stream: Option<StdBufStream<S>>,
 }
 
-impl Connection {
-    /// Creates a new connection. Does not actually open a connection to the server until the "send" method is called.
-    fn new(addr: &'static str, timeout: Duration) -> Connection {
-        Connection { addr, read_timeout: timeout, reader: None, writer: None }
+impl<S: Stream + 'static> Connection<S> {
+    /// Creates a new empty connection. No stream to the server will be created until the first request is sent.
+    fn new() -> Connection<S> {
+        Connection { stream: None }
     }
 
     /// Sends a request to the server and returns the response.
     /// If the connection is not yet open, then a new connection will be opened.
-    /// If the request cannot be written, then a new connection is opened and the request is retried once more.
-    /// If a request was written but a response can not be read, then a new connection is made and the request is retried once.
-    fn send(&mut self, request: &Request) -> Result<Response, RequestError> {
-        self.ensure_connected()?;
-
-        if self.write_request(request).is_err() {
-            self.connect()?;
-            self.write_request(request)?
+    /// If the request fails at any step (writing or reading), then a new connection is created and the entire request is retried.
+    /// New connections are spawned using the given stream_factory argument.
+    fn send<F: StreamFactory<S>>(&mut self, stream_factory: &F, request: &Request) -> Result<Response, RequestError> {
+        if self.stream.is_none() {
+            self.connect(stream_factory)?;
         }
 
-        match self.read_response() {
-            Ok(response) => Ok(response),
+        match send_request(self.stream.as_mut().unwrap(), request) {
             Err(_) => {
-                self.connect()?;
-                self.write_request(request)?;
-                self.read_response()
+                self.connect(stream_factory)?;
+                send_request(self.stream.as_mut().unwrap(), request)
             }
+            x => x
         }
-    }
-
-    /// Attempts to read a response from the stream.
-    fn read_response(&mut self) -> Result<Response, RequestError> {
-        let response_parser = ResponseParser::new();
-        match response_parser.parse(self.reader.as_mut().unwrap())? {
-            Done(response) => Ok(response),
-            IoErr(_, err) => Err(Reading(err))
-        }
-    }
-
-    /// Attempts to write a request to the stream.
-    fn write_request(&mut self, request: &Request) -> Result<(), RequestError> {
-        write_request(self.writer.as_mut().unwrap(), request).map_err(|err| Writing(err))
-    }
-
-    /// Connects to the server if not already connected.
-    fn ensure_connected(&mut self) -> Result<(), RequestError> {
-        if self.reader.is_none() || self.writer.is_none() {
-            self.connect()?;
-        }
-        Ok(())
     }
 
     /// Opens a new connection to the server.
-    fn connect(&mut self) -> Result<(), RequestError> {
-        let (reader, writer) =
-            connect(self.addr, self.read_timeout).map_err(|err| Connecting(err))?;
-        self.reader = Some(reader);
-        self.writer = Some(writer);
+    fn connect<F: StreamFactory<S>>(&mut self, stream_factory: &F) -> Result<(), RequestError> {
+        let new_stream = stream_factory.create().map_err(|err| Connecting(err))?;
+        self.stream = Some(stream::with_buf_reader_and_writer(new_stream, BufReader::new, BufWriter::new));
         Ok(())
     }
 }
 
-/// Opens a new connection to the specified address and returns a reader and writer for communication.
-fn connect<A: ToSocketAddrs>(addr: A, read_timeout: Duration) -> Result<(BufReader<TcpStream>, BufWriter<TcpStream>), Error> {
-    let stream = TcpStream::connect(addr)?;
-    let stream_clone = stream.try_clone()?;
-    stream.set_read_timeout(Some(read_timeout)).unwrap();
+/// Sends a request to the server and returns the response.
+fn send_request<T: BufStream>(stream: &mut T, request: &Request) -> Result<Response, RequestError> {
+    write_request(stream, request).map_err(|err| Writing(err))?;
 
-    Ok((BufReader::new(stream), BufWriter::new(stream_clone)))
+    let response_parser = ResponseParser::new();
+    match response_parser.parse(stream)? {
+        Done(response) => Ok(response),
+        IoErr(_, err) => Err(Reading(err))
+    }
 }
 
 /// Writes the given request to the given writer.
@@ -163,16 +156,27 @@ pub fn write_request(writer: &mut impl Write, request: &Request) -> std::io::Res
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Error, ErrorKind};
+    use std::net::TcpStream;
     use std::sync::Arc;
     use std::thread::spawn;
     use std::time::Duration;
 
     use crate::client::{Client, Config, write_request};
+    use crate::client::stream_factory::StreamFactory;
     use crate::common::header::CONTENT_TYPE;
     use crate::common::method::Method;
     use crate::common::request::Request;
     use crate::header_map;
     use crate::util::mock::MockWriter;
+
+    struct MockFactory;
+
+    impl StreamFactory<TcpStream> for MockFactory {
+        fn create(&self) -> std::io::Result<TcpStream> {
+            Err(Error::from(ErrorKind::Other))
+        }
+    }
 
     #[test]
     #[should_panic]
@@ -181,7 +185,7 @@ mod tests {
             addr: "localhost:7878",
             read_timeout: Duration::from_millis(10),
             num_connections: 0,
-        });
+        }, MockFactory);
     }
 
     #[test]
@@ -238,12 +242,12 @@ mod tests {
     }
 
     #[test]
-    fn can_send_requests_from_multiple_threads() {
+    fn can_call_send_request_from_multiple_threads() {
         let client = Client::new(Config {
             addr: "0.0.0.0:9000",
             read_timeout: Duration::from_secs(1),
             num_connections: 5,
-        });
+        }, MockFactory);
 
         let client = Arc::new(client);
 
