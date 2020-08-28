@@ -11,7 +11,7 @@ use crate::util::tls_stream::TlsStream;
 pub type ClientTlsStream = TlsStream<ClientSession, TcpStream>;
 
 /// A factory that produces new streams to a server.
-pub trait StreamFactory<T> {
+pub trait StreamFactory<T>: Send + Sync {
     fn create(&self) -> std::io::Result<T>;
 }
 

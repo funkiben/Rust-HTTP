@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::thread::spawn;
 use std::time::Duration;
 
 use my_http::client::{Client, Config};
@@ -9,6 +7,8 @@ use my_http::common::request::Request;
 use my_http::common::status;
 use my_http::common::status::Status;
 use my_http::header_map;
+
+mod util;
 
 #[test]
 fn single_connection_google() {
@@ -110,62 +110,34 @@ fn single_connection_reddit() {
 
 #[test]
 fn small_connection_pool() {
-    test_connection_pool("google.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
+    test_empty_requests("google.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
 }
 
 #[test]
 fn large_connection_pool() {
-    test_connection_pool("google.com:80", 123, 50, status::MOVED_PERMANENTLY, true);
+    test_empty_requests("google.com:80", 123, 50, status::MOVED_PERMANENTLY, true);
 }
 
 #[test]
 fn many_websites_with_small_connection_pool() {
-    test_connection_pool("northeastern.edu:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("reddit.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("facebook.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("instagram.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("twitter.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("wikipedia.org:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("youtube.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
-    test_connection_pool("amazon.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
-    test_connection_pool("yahoo.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
-    test_connection_pool("apple.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("northeastern.edu:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("reddit.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("facebook.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("instagram.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("twitter.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("wikipedia.org:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("youtube.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
+    test_empty_requests("amazon.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
+    test_empty_requests("yahoo.com:80", 13, 50, status::MOVED_PERMANENTLY, true);
+    test_empty_requests("apple.com:80", 13, 50, status::MOVED_PERMANENTLY, false);
 }
 
-fn test_connection_pool(addr: &'static str, num_connections: usize, requests: usize, expected_status: Status, should_have_body: bool) {
-    println!("sending requests to {}", addr);
+fn test_empty_requests(addr: &'static str, num_connections: usize, requests: usize, expected_status: Status, should_have_body: bool) {
     let client = Client::new_http(Config {
         addr,
-        read_timeout: Duration::from_secs(5),
+        read_timeout: Duration::from_millis(1000),
         num_connections,
     });
 
-    let website = &addr[..(addr.len() - 3)];
-
-    let client = Arc::new(client);
-
-    let mut handlers = vec![];
-
-    for _ in 0..requests {
-        let client = Arc::clone(&client);
-        let handler = spawn(move || {
-            let response = client.send(&Request {
-                uri: "/".to_string(),
-                method: Method::GET,
-                headers: header_map![
-                    ("host", website)
-                ],
-                body: vec![],
-            }).unwrap();
-
-            assert_eq!(response.status, expected_status);
-            assert_eq!(should_have_body, !response.body.is_empty());
-        });
-
-        handlers.push(handler);
-    }
-
-    for handler in handlers {
-        handler.join().unwrap();
-    }
+    util::test_client::test_empty_requests(client, requests, expected_status, should_have_body);
 }

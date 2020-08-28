@@ -62,7 +62,7 @@ fn get_content_length(headers: &HeaderMap) -> Option<Result<usize, ParsingError>
 /// Checks if the header map has chunked transfer encoding header value.
 fn is_chunked_transfer_encoding(headers: &HeaderMap) -> bool {
     headers.get_first_header_value(&header::TRANSFER_ENCODING)
-        .map(|v| v.eq("chunked")).unwrap_or(false)
+        .map(|v| v.contains("chunked")).unwrap_or(false)
 }
 
 impl Parse<Vec<u8>> for BodyParser {
