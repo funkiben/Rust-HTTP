@@ -31,7 +31,7 @@ impl TcpStreamFactory {
 impl StreamFactory<TcpStream> for TcpStreamFactory {
     fn create(&self) -> std::io::Result<TcpStream> {
         let stream = TcpStream::connect(self.addr).or_else(|_| {
-            /// Try to reconnect once.
+            // Try to reconnect once.
             TcpStream::connect(self.addr)
         })?;
 
