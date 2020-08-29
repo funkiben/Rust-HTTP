@@ -30,7 +30,11 @@ impl TcpStreamFactory {
 
 impl StreamFactory<TcpStream> for TcpStreamFactory {
     fn create(&self) -> std::io::Result<TcpStream> {
-        let stream = TcpStream::connect(self.addr)?;
+        let stream = TcpStream::connect(self.addr).or_else(|_| {
+            /// Try to reconnect once.
+            TcpStream::connect(self.addr)
+        })?;
+
         stream.set_read_timeout(Some(self.read_timeout)).unwrap();
 
         Ok(stream)

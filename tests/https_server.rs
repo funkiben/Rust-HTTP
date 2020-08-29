@@ -37,7 +37,7 @@ fn curl_request() {
         addr: "0.0.0.0:8000",
         connection_handler_threads: 5,
         router,
-    }, get_tsl_config()));
+    }, get_tsl_config()).unwrap());
 
     sleep(Duration::from_millis(1000));
 
@@ -67,7 +67,7 @@ fn curl_multiple_requests_same_connection() {
         addr: "0.0.0.0:8001",
         connection_handler_threads: 5,
         router,
-    }, get_tsl_config()));
+    }, get_tsl_config()).unwrap());
 
     sleep(Duration::from_millis(1000));
 
