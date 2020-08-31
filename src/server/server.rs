@@ -2,7 +2,7 @@ use std::io::{BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use mio::net::TcpStream;
-use rustls::ServerSession;
+use rustls::{ServerConfig, ServerSession};
 
 use crate::common::header::{CONNECTION, HeaderMapOps};
 use crate::common::request::Request;
@@ -32,22 +32,24 @@ const READ_BUF_SIZE: usize = 4096;
 /// Size of connection write buffers.
 const WRITE_BUF_SIZE: usize = 4096;
 
-/// Starts the HTTP server. This function will block and listen for new connections.
-pub fn start(config: Config) -> std::io::Result<()> {
-    let config = Arc::new(config);
+/// Starts an HTTP server. This function blocks.
+pub fn listen_http(config: Config) -> std::io::Result<()> {
+    start_abstract(config, |stream| stream)
+}
 
-    if let Some(tls_config) = &config.tls_config {
-        listen_abstract(&config, |stream| TlsStream::new(ServerSession::new(tls_config), stream))
-    } else {
-        listen_abstract(&config, |stream| stream)
-    }
+/// Starts an HTTPS server. This function blocks.
+pub fn listen_https(config: Config, tls_config: ServerConfig) -> std::io::Result<()> {
+    let tls_config = Arc::new(tls_config);
+    start_abstract(config, |stream| TlsStream::new(ServerSession::new(&tls_config), stream))
 }
 
 /// Starts the server with the given config, and uses the given on_new_connection function to get streams for the incoming connections.
 /// This abstraction is necessary since HTTP and HTTPS connections use different underlying streams.
-fn listen_abstract<T: Stream + Send + 'static>(config: &Arc<Config>, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
+fn start_abstract<T: Stream + Send + 'static>(config: Config, on_new_connection: impl Fn(TcpStream) -> T) -> std::io::Result<()> {
     let addr = config.addr.parse().expect("Invalid socket address");
     let thread_pool = ThreadPool::new(config.connection_handler_threads);
+
+    let config = Arc::new(config);
 
     listen(addr,
            |socket, addr| {

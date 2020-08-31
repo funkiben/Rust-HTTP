@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rustls::ServerConfig;
+
 use my_http::client::write_request;
 use my_http::common::request::Request;
 use my_http::common::response::Response;
@@ -15,7 +17,7 @@ use crate::util::curl;
 
 pub fn test_server(config: Config, num_connections: usize, num_loops_per_connection: usize, sleeps_between_requests: bool, messages: Vec<(Request, Response)>) {
     let addr = config.addr;
-    start_server(config, &messages);
+    start_server(config, None, &messages);
 
     let messages: Vec<(Request, Vec<u8>)> = messages.into_iter().map(|(req, res)| {
         let mut bytes: Vec<u8> = vec![];
@@ -63,10 +65,12 @@ pub fn test_server(config: Config, num_connections: usize, num_loops_per_connect
     }
 }
 
-pub fn test_server_with_curl(config: Config, num_connections: usize, messages: Vec<(Request, Response)>, https: bool) {
+pub fn test_server_with_curl(config: Config, tls_config: Option<ServerConfig>, num_connections: usize, messages: Vec<(Request, Response)>) {
     let addr = config.addr;
 
-    start_server(config, &messages);
+    let https = tls_config.is_some();
+
+    start_server(config, tls_config, &messages);
 
     let messages = Arc::new(messages);
 
@@ -88,10 +92,16 @@ pub fn test_server_with_curl(config: Config, num_connections: usize, messages: V
     }
 }
 
-fn start_server(mut server_config: Config, messages: &Vec<(Request, Response)>) {
+fn start_server(mut server_config: Config, tls_config: Option<ServerConfig>, messages: &Vec<(Request, Response)>) {
     server_config.router = get_router(messages);
 
-    spawn(|| server::start(server_config).unwrap());
+    spawn(|| {
+        if let Some(tls_config) = tls_config {
+            server::listen_https(server_config, tls_config).unwrap()
+        } else {
+            server::listen_http(server_config).unwrap()
+        }
+    });
     sleep(Duration::from_millis(100));
 }
 

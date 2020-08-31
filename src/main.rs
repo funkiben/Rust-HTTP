@@ -24,10 +24,9 @@ fn main() -> Result<(), Error> {
     router.route("/my/middleton/website/", file_router("/Users/Ben/Code/middletonSite/"));
     router.route("/", file_router("/Users/Ben/Code/ReactTetris/tetris-app/build/"));
 
-    server::start(Config {
+    server::listen_http(Config {
         addr: "0.0.0.0:80",
         connection_handler_threads: 5,
-        tls_config: None,
         router,
     })
 }
