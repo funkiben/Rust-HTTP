@@ -7,3 +7,8 @@ Minimal dependency HTTP/HTTPS library for Rust.
 - HTTPS support using Rustls for TLS. 
 - Basic routing API.
 - Supports HTTP/1.0 and HTTP/1.1.
+
+### Client Features
+- Connection pool for concurrent requests.
+- HTTPS support.
+- Supports HTTP/1.0 and HTTP/1.1
