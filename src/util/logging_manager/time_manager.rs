@@ -122,8 +122,10 @@ impl DateTime {
             true => {
                 if month == 12 {
                     year += 1;
+                    month = 1
+                } else {
+                    month += 1
                 }
-                month = (month + 1) % 12;
                 1
             }
             false => epoch_difference_days + 1,
@@ -183,7 +185,7 @@ impl FromStr for DateTime {
 
         // days in each month differ due to leap year
         let month_days = utils::get_month_calendar(year);
-        if day > month_days[(month as usize) - 1] as u8 {
+        if day > month_days[(month as usize) - 1] as u8 || day < 1 {
             return Err(DateTimeError::OutOfBounds);
         }
 
@@ -255,6 +257,10 @@ mod tests {
         assert_eq!(
             "[2020-03-01 00:00:00]",
             DateTime::from_unix(1583020800).format()
+        );
+        assert_eq!(
+            "[2020-12-01 00:10:00]",
+            DateTime::from_unix(1606781400).format()
         );
     }
 
